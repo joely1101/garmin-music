@@ -24,10 +24,17 @@
   <!-- 圓形大錶盤本體 -->
   <circle cx="60" cy="60" r="39" fill="#27272a" stroke="#3f3f46" stroke-width="3"/>
   <circle cx="60" cy="60" r="33" fill="#09090b"/>
-  <circle cx="60" cy="60" r="28" fill="url(#opt3_bg)"/>
+  <circle cx="60" cy="60" r="29" fill="url(#opt3_bg)"/>
 
-  <!-- 音樂播放三角箭頭與音符結合 -->
-  <polygon points="50,47 50,73 72,60" fill="#ffffff" opacity="0.95"/>
-  <circle cx="69" cy="49" r="4.5" fill="#ffffff"/>
-  <rect x="67" y="49" width="3.5" height="15" fill="#ffffff"/>
+  <!-- 填滿錶盤的大型雙音符 (清晰、粗壯、超顯眼) -->
+  <!-- 左符頭 -->
+  <ellipse cx="46.5" cy="72" rx="7.5" ry="5.5" fill="#ffffff" transform="rotate(-18 46.5 72)"/>
+  <!-- 右符頭 -->
+  <ellipse cx="73.5" cy="64" rx="7.5" ry="5.5" fill="#ffffff" transform="rotate(-18 73.5 64)"/>
+  <!-- 左符桿 -->
+  <rect x="51.5" y="40" width="5.5" height="32" fill="#ffffff"/>
+  <!-- 右符桿 -->
+  <rect x="78.5" y="32" width="5.5" height="32" fill="#ffffff"/>
+  <!-- 上方粗橫槓連梁 -->
+  <polygon points="51.5,40 84,32 84,40 51.5,48" fill="#ffffff"/>
 </svg>
