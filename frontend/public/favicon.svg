@@ -1,34 +1,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
   <defs>
-    <linearGradient id="garmin_grad" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="opt2_grad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#f43f5e"/>
       <stop offset="100%" stop-color="#fb923c"/>
     </linearGradient>
   </defs>
-  <!-- 上錶帶 (具備運動透氣紋理) -->
-  <path d="M44 4 L76 4 L74 24 L46 24 Z" fill="#334155" rx="3"/>
-  <rect x="52" y="8" width="16" height="3" rx="1.5" fill="#1e293b"/>
-  <rect x="53" y="14" width="14" height="3" rx="1.5" fill="#1e293b"/>
+  <!-- 上錶帶 -->
+  <path d="M42 6 L78 6 L78 26 L42 26 Z" fill="#1e293b" rx="4"/>
+  <rect x="52" y="11" width="16" height="3" rx="1.5" fill="#334155"/>
 
   <!-- 下錶帶 -->
-  <path d="M46 96 L74 96 L76 116 L44 116 Z" fill="#334155" rx="3"/>
-  <rect x="53" y="102" width="14" height="3" rx="1.5" fill="#1e293b"/>
-  <rect x="52" y="108" width="16" height="3" rx="1.5" fill="#1e293b"/>
+  <path d="M42 94 L78 94 L78 114 L42 114 Z" fill="#1e293b" rx="4"/>
+  <rect x="52" y="100" width="16" height="3" rx="1.5" fill="#334155"/>
 
-  <!-- 手錶實體按鍵 (Garmin 經典側邊按鍵) -->
-  <rect x="19" y="44" width="4" height="10" rx="2" fill="#94a3b8"/>
-  <rect x="97" y="38" width="4" height="10" rx="2" fill="#f43f5e"/> <!-- 啟動運動紅鍵 -->
-  <rect x="97" y="68" width="4" height="10" rx="2" fill="#94a3b8"/> <!-- Back 鍵 -->
+  <!-- 右側數位錶冠 (Digital Crown) 與實體按鈕 -->
+  <rect x="94" y="40" width="5.5" height="15" rx="2.5" fill="#cbd5e1"/>
+  <rect x="94" y="66" width="4" height="12" rx="2" fill="#64748b"/>
 
-  <!-- 手錶金屬錶殼與外圈 -->
-  <circle cx="60" cy="60" r="38" fill="#0f172a" stroke="#475569" stroke-width="4"/>
-  <!-- 內錶圈刻度圓 (Bezel) -->
-  <circle cx="60" cy="60" r="32" fill="url(#garmin_grad)"/>
+  <!-- 圓角方形金屬錶身 -->
+  <rect x="24" y="24" width="72" height="72" rx="22" fill="#090d16" stroke="#475569" stroke-width="3"/>
+  <rect x="29" y="29" width="62" height="62" rx="17" fill="url(#opt2_grad)"/>
 
-  <!-- 音符主體 (白色雙音符) -->
-  <ellipse cx="48" cy="70" rx="6.5" ry="5" fill="#ffffff" transform="rotate(-18 48 70)"/>
-  <ellipse cx="71" cy="63" rx="6.5" ry="5" fill="#ffffff" transform="rotate(-18 71 63)"/>
-  <rect x="53" y="43" width="4.5" height="28" fill="#ffffff"/>
-  <rect x="76" y="36" width="4.5" height="28" fill="#ffffff"/>
-  <polygon points="53,43 80.5,36 80.5,43 53,50" fill="#ffffff"/>
+  <!-- 音波擴散同心圓圈 -->
+  <circle cx="60" cy="60" r="24" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.45"/>
+
+  <!-- 靈動十六分音符 (帶雙旗尾) -->
+  <ellipse cx="51" cy="69" rx="7.5" ry="5.5" fill="#ffffff" transform="rotate(-15 51 69)"/>
+  <rect x="56.5" y="38" width="4" height="31" fill="#ffffff"/>
+  <!-- 雙音符尾旗 (流線雙弧) -->
+  <path d="M60.5 38 C72 38, 77 46, 73 54 C70 48, 66 45, 60.5 45 Z" fill="#ffffff"/>
+  <path d="M60.5 47 C72 47, 77 55, 73 63 C70 57, 66 54, 60.5 54 Z" fill="#ffffff"/>
 </svg>
