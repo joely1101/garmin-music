@@ -51,6 +51,7 @@ export default function App() {
 
   // Authentication State (預設未登入，強制要求登入驗證)
   const [currentUser, setCurrentUser] = useState<string | null>(() => localStorage.getItem('garmin_user'));
+  const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem('garmin_token'));
   const [loginUsername, setLoginUsername] = useState('admin');
   const [loginPassword, setLoginPassword] = useState('');
   const [authError, setAuthError] = useState('');
@@ -164,7 +165,9 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setCurrentUser(data.username);
+        setAuthToken(data.token);
         localStorage.setItem('garmin_user', data.username);
+        localStorage.setItem('garmin_token', data.token);
         setLoginPassword('');
       } else {
         const data = await res.json();
@@ -177,7 +180,9 @@ export default function App() {
 
   const handleLogout = () => {
     setCurrentUser(null);
+    setAuthToken(null);
     localStorage.removeItem('garmin_user');
+    localStorage.removeItem('garmin_token');
     setTracks([]);
     setFolders([]);
   };
@@ -246,7 +251,8 @@ export default function App() {
       setCurrentTrack(track);
       setIsPlaying(true);
       if (audioRef.current) {
-        audioRef.current.src = `${apiBase}/api/tracks/${track.id}/stream`;
+        const streamUrl = `${apiBase}/api/tracks/${track.id}/stream${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
+        audioRef.current.src = streamUrl;
         audioRef.current.play();
       }
     }

@@ -36,6 +36,36 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
+# Server JWT/HMAC Secret Key
+SERVER_SECRET = os.getenv("SERVER_SECRET", "garmin-music-super-secret-key-2026")
+
+def generate_web_token(username: str) -> str:
+    # 簡單且高安全性的 HMAC-SHA256 Token
+    import hmac, time
+    ts = int(time.time())
+    msg = f"{username}:{ts}".encode("utf-8")
+    sig = hmac.new(SERVER_SECRET.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+    return f"{username}:{ts}:{sig}"
+
+def verify_web_token(token: Optional[str]) -> bool:
+    if not token or ":" not in token:
+        return False
+    import hmac, time
+    try:
+        parts = token.split(":")
+        if len(parts) != 3:
+            return False
+        username, ts_str, sig = parts
+        ts = int(ts_str)
+        # Token 7 天有效
+        if time.time() - ts > 7 * 86400:
+            return False
+        expected_msg = f"{username}:{ts}".encode("utf-8")
+        expected_sig = hmac.new(SERVER_SECRET.encode("utf-8"), expected_msg, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(sig, expected_sig)
+    except Exception:
+        return False
+
 def init_db():
     with get_db() as conn:
         conn.execute("""
@@ -294,24 +324,36 @@ def subsonic_get_random_songs(size: int = Query(20), user: str = Depends(verify_
             })
         return subsonic_response("randomSongs", {"song": entries})
 
-def verify_stream_auth(
-    u: Optional[str] = Query(None),
-    p: Optional[str] = Query(None),
-    t: Optional[str] = Query(None),
-    s: Optional[str] = Query(None),
-    enc: Optional[str] = Query(None),
-):
-    # 若有帶帳密或 token 則驗證；若為網頁端直連試聽 (HTML5 Audio 標籤) 則允許免密串流
-    if not u and not t and not p:
-        return "web_player"
-    return verify_subsonic_auth(u, p, t, s, enc)
-
 @app.get("/rest/stream.view")
 @app.get("/rest/download.view")
-@app.get("/api/tracks/{id}/stream")
-def subsonic_stream(id: str, user: str = Depends(verify_stream_auth)):
+def subsonic_stream(id: str = Query(...), user: str = Depends(verify_subsonic_auth)):
     with get_db() as conn:
         track = conn.execute("SELECT * FROM tracks WHERE id = ?", (id,)) .fetchone()
+        if not track:
+            raise HTTPException(status_code=404, detail="Track not found")
+        file_path = MUSIC_DIR / track["rel_path"]
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found on disk")
+        
+        file_size = file_path.stat().st_size
+        headers = {
+            "Content-Length": str(file_size),
+            "Accept-Ranges": "bytes",
+            "Content-Type": "audio/mpeg"
+        }
+        return FileResponse(
+            path=file_path,
+            media_type="audio/mpeg",
+            headers=headers,
+            filename=Path(track["rel_path"]).name
+        )
+
+@app.get("/api/tracks/{id}/stream")
+def web_stream_track(id: str, token: Optional[str] = Query(None)):
+    if not verify_web_token(token):
+        raise HTTPException(status_code=401, detail="Unauthorized: Invalid or missing token")
+    with get_db() as conn:
+        track = conn.execute("SELECT * FROM tracks WHERE id = ?", (id,)).fetchone()
         if not track:
             raise HTTPException(status_code=404, detail="Track not found")
         file_path = MUSIC_DIR / track["rel_path"]
@@ -356,7 +398,8 @@ def login(req: LoginRequest):
         user = conn.execute("SELECT username, password FROM users WHERE username = ?", (req.username,)).fetchone()
         if not user or user["password"] != req.password:
             raise HTTPException(status_code=401, detail="帳號或密碼錯誤")
-        return {"status": "ok", "username": user["username"]}
+        token = generate_web_token(user["username"])
+        return {"status": "ok", "username": user["username"], "token": token}
 
 @app.post("/api/auth/change-password")
 def change_password(req: LoginRequest):
