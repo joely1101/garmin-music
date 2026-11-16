@@ -1,0 +1,26 @@
+# Node
+node_modules/
+dist/
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+backend_venv/
+*.db
+*.sqlite3
+
+# Audio files (do not commit music files)
+backend/music/**/*.mp3
+backend/music/*.mp3
+
+# Android Build artifacts
+frontend/android/.gradle/
+frontend/android/app/build/
+frontend/android/build/
+frontend/android/.idea/
+frontend/android/captures/
+frontend/android/local.properties
