@@ -519,7 +519,7 @@ class DirectAudioDownloadRequest(BaseModel):
 
 def run_download_task(task_id: str, url: str, target_folder: str = "1116", download_playlist: bool = False, custom_title: Optional[str] = None, custom_artist: Optional[str] = None):
     display_title = custom_title or url
-    DOWNLOAD_TASKS[task_id] = {"status": "processing", "progress": "Starting...", "title": display_title, "error": None}
+    DOWNLOAD_TASKS[task_id] = {"status": "processing", "progress": "Starting...", "title": display_title, "url": url, "error": None}
     
     target_dir = MUSIC_DIR / target_folder
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -645,7 +645,19 @@ def start_download(req: DownloadRequest, background_tasks: BackgroundTasks):
 
 @app.post("/api/download/direct")
 def start_direct_download(req: DirectAudioDownloadRequest, background_tasks: BackgroundTasks):
+    # 檢查是否已在下載中或已存在
+    for tid, t in DOWNLOAD_TASKS.items():
+        if t.get("url") == req.audio_url and t.get("status") in ("processing", "queued"):
+            return {"task_id": tid, "status": "already_queued", "message": "此單集已在下載佇列中"}
+            
     task_id = str(uuid.uuid4())
+    DOWNLOAD_TASKS[task_id] = {
+        "status": "queued",
+        "progress": "已排入下載佇列...",
+        "title": req.title,
+        "url": req.audio_url,
+        "error": None
+    }
     background_tasks.add_task(run_download_task, task_id, req.audio_url, req.target_folder, False, req.title, req.artist)
     return {"task_id": task_id, "status": "queued"}
 

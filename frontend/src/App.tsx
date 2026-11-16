@@ -45,6 +45,7 @@ interface DownloadTask {
   status: string;
   progress: string;
   title: string;
+  url?: string;
   error?: string;
 }
 
@@ -427,6 +428,14 @@ export default function App() {
 
   // Download Single Episode
   const handleDownloadEpisode = async (ep: PodcastEpisode) => {
+    // 檢查是否已存在曲庫中
+    const isAlreadyInTracks = tracks.some(t => t.title === ep.title);
+    if (isAlreadyInTracks) {
+      if (!window.confirm(`「${ep.title}」已在曲庫中，確定要重新下載嗎？`)) {
+        return;
+      }
+    }
+
     setDownloadingEpisodeUrls(prev => ({ ...prev, [ep.audio_url]: true }));
     try {
       const res = await apiFetch('/api/download/direct', {
@@ -446,8 +455,6 @@ export default function App() {
       }
     } catch (err) {
       alert('連線失敗');
-    } finally {
-      setDownloadingEpisodeUrls(prev => ({ ...prev, [ep.audio_url]: false }));
     }
   };
 
@@ -981,7 +988,20 @@ export default function App() {
                 ) : channelDetail?.episodes && channelDetail.episodes.length > 0 ? (
                   <div className="space-y-2">
                     {channelDetail.episodes.map(ep => {
-                      const isDownloading = downloadingEpisodeUrls[ep.audio_url];
+                      // 檢查 1: 當前網頁本地正送出中
+                      const isSubmitting = downloadingEpisodeUrls[ep.audio_url];
+                      
+                      // 檢查 2: 背景任務是否正在排程或下載此 URL/標題
+                      const activeTask = Object.values(tasks).find(
+                        t => (t.url === ep.audio_url || t.title === ep.title) && (t.status === 'processing' || t.status === 'queued')
+                      );
+                      const isTaskRunning = !!activeTask;
+
+                      // 檢查 3: 曲庫中是否已有此歌曲
+                      const isDownloaded = tracks.some(t => t.title === ep.title);
+
+                      const isDisabled = isSubmitting || isTaskRunning || isDownloaded;
+
                       return (
                         <div key={ep.id} className="p-3 rounded-2xl bg-neutral-900/40 border border-neutral-900/80 hover:bg-neutral-900 space-y-2">
                           <div className="flex items-start justify-between gap-3">
@@ -1006,13 +1026,39 @@ export default function App() {
                             </div>
 
                             <button 
-                              disabled={isDownloading}
+                              disabled={isDisabled}
                               onClick={() => handleDownloadEpisode(ep)}
-                              className="px-2.5 py-1.5 rounded-xl bg-neutral-800 hover:bg-amber-600 hover:text-white text-neutral-300 text-xs font-semibold flex items-center gap-1 shrink-0 transition active:scale-95 disabled:opacity-50"
-                              title="下載到伺服器與手錶"
+                              className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1 shrink-0 transition active:scale-95 ${
+                                isDownloaded
+                                  ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/40 opacity-80 cursor-default'
+                                  : isTaskRunning || isSubmitting
+                                  ? 'bg-amber-950/80 text-amber-400 border border-amber-800/40 opacity-90 cursor-wait'
+                                  : 'bg-neutral-800 hover:bg-amber-600 hover:text-white text-neutral-300'
+                              }`}
+                              title={
+                                isDownloaded 
+                                  ? '已下載存入曲庫' 
+                                  : isTaskRunning 
+                                  ? `下載中 (${activeTask?.progress || '排程中...'})` 
+                                  : '下載到伺服器與手錶'
+                              }
                             >
-                              {isDownloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                              <span>下載</span>
+                              {isSubmitting || isTaskRunning ? (
+                                <>
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                                  <span>下載中</span>
+                                </>
+                              ) : isDownloaded ? (
+                                <>
+                                  <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
+                                  <span>已下載</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Download className="w-3.5 h-3.5" />
+                                  <span>下載</span>
+                                </>
+                              )}
                             </button>
                           </div>
                         </div>
