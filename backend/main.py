@@ -76,12 +76,16 @@ def verify_subsonic_auth(
     t: Optional[str] = Query(None),
     s: Optional[str] = Query(None),
     enc: Optional[str] = Query(None),
+    allow_web: bool = False,
 ):
     """
     Subsonic API Auth logic:
     Token mode: t == md5(password + salt)
     Password mode: p == password or hex(password)
     """
+    if allow_web and not u and not t and not p:
+        return "guest"
+
     if not u:
         raise HTTPException(status_code=401, detail="Subsonic: Missing username")
     with get_db() as conn:
@@ -290,9 +294,22 @@ def subsonic_get_random_songs(size: int = Query(20), user: str = Depends(verify_
             })
         return subsonic_response("randomSongs", {"song": entries})
 
+def verify_stream_auth(
+    u: Optional[str] = Query(None),
+    p: Optional[str] = Query(None),
+    t: Optional[str] = Query(None),
+    s: Optional[str] = Query(None),
+    enc: Optional[str] = Query(None),
+):
+    # 若有帶帳密或 token 則驗證；若為網頁端直連試聽 (HTML5 Audio 標籤) 則允許免密串流
+    if not u and not t and not p:
+        return "web_player"
+    return verify_subsonic_auth(u, p, t, s, enc)
+
 @app.get("/rest/stream.view")
 @app.get("/rest/download.view")
-def subsonic_stream(id: str = Query(...), user: str = Depends(verify_subsonic_auth)):
+@app.get("/api/tracks/{id}/stream")
+def subsonic_stream(id: str, user: str = Depends(verify_stream_auth)):
     with get_db() as conn:
         track = conn.execute("SELECT * FROM tracks WHERE id = ?", (id,)) .fetchone()
         if not track:

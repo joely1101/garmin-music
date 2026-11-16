@@ -246,7 +246,7 @@ export default function App() {
       setCurrentTrack(track);
       setIsPlaying(true);
       if (audioRef.current) {
-        audioRef.current.src = `${apiBase}/rest/stream.view?id=${track.id}&u=${encodeURIComponent(currentUser || 'admin')}&p=admin`;
+        audioRef.current.src = `${apiBase}/api/tracks/${track.id}/stream`;
         audioRef.current.play();
       }
     }
