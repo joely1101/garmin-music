@@ -5,36 +5,36 @@
       <stop offset="100%" stop-color="#fb923c"/>
     </linearGradient>
   </defs>
-  <!-- 上錶帶 (含錶扣金屬圈) -->
-  <rect x="43" y="3" width="34" height="24" rx="4" fill="#18181b"/>
-  <rect x="47" y="7" width="26" height="5" rx="2" fill="#71717a"/> <!-- 金屬固定環 -->
+  <!-- 上錶帶 (淺色搭配白色手錶) -->
+  <rect x="43" y="3" width="34" height="24" rx="4" fill="#334155"/>
+  <rect x="47" y="7" width="26" height="5" rx="2" fill="#e2e8f0"/> <!-- 金屬固定環 -->
 
   <!-- 下錶帶 (含手錶穿孔) -->
-  <rect x="43" y="93" width="34" height="24" rx="4" fill="#18181b"/>
-  <circle cx="60" cy="100" r="2.5" fill="#27272a"/>
-  <circle cx="60" cy="107" r="2.5" fill="#27272a"/>
-  <circle cx="60" cy="114" r="2.5" fill="#27272a"/>
+  <rect x="43" y="93" width="34" height="24" rx="4" fill="#334155"/>
+  <circle cx="60" cy="100" r="2.5" fill="#1e293b"/>
+  <circle cx="60" cy="107" r="2.5" fill="#1e293b"/>
+  <circle cx="60" cy="114" r="2.5" fill="#1e293b"/>
 
-  <!-- 手錶機身主體側邊 4 顆螺栓/護橋按鍵 -->
-  <rect x="18" y="42" width="5" height="9" rx="2" fill="#71717a"/>
-  <rect x="18" y="68" width="5" height="9" rx="2" fill="#71717a"/>
-  <rect x="97" y="42" width="5" height="9" rx="2" fill="#f43f5e"/> <!-- 啟動紅鍵 -->
-  <rect x="97" y="68" width="5" height="9" rx="2" fill="#71717a"/>
+  <!-- 手錶機身側邊 4 顆按鍵 (白色/精鋼) -->
+  <rect x="17" y="42" width="5" height="9" rx="2" fill="#cbd5e1"/>
+  <rect x="17" y="68" width="5" height="9" rx="2" fill="#cbd5e1"/>
+  <rect x="98" y="42" width="5" height="9" rx="2" fill="#f43f5e"/> <!-- 運動紅鍵 -->
+  <rect x="98" y="68" width="5" height="9" rx="2" fill="#cbd5e1"/>
 
-  <!-- 圓形大錶盤本體 -->
-  <circle cx="60" cy="60" r="39" fill="#27272a" stroke="#3f3f46" stroke-width="3"/>
-  <circle cx="60" cy="60" r="33" fill="#09090b"/>
+  <!-- 手錶外框改成亮白質感 (白色外框 + 白色按鍵裝飾) -->
+  <circle cx="60" cy="60" r="40" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+  <circle cx="60" cy="60" r="33" fill="#0f172a"/>
   <circle cx="60" cy="60" r="29" fill="url(#opt3_bg)"/>
 
-  <!-- 填滿錶盤的大型雙音符 (清晰、粗壯、超顯眼) -->
+  <!-- 音符主體 (收攏在內圓 r=29 之中，絕不跑出外框) -->
   <!-- 左符頭 -->
-  <ellipse cx="46.5" cy="72" rx="7.5" ry="5.5" fill="#ffffff" transform="rotate(-18 46.5 72)"/>
+  <ellipse cx="49" cy="69" rx="6.5" ry="4.8" fill="#ffffff" transform="rotate(-18 49 69)"/>
   <!-- 右符頭 -->
-  <ellipse cx="73.5" cy="64" rx="7.5" ry="5.5" fill="#ffffff" transform="rotate(-18 73.5 64)"/>
+  <ellipse cx="71" cy="63" rx="6.5" ry="4.8" fill="#ffffff" transform="rotate(-18 71 63)"/>
   <!-- 左符桿 -->
-  <rect x="51.5" y="40" width="5.5" height="32" fill="#ffffff"/>
+  <rect x="53.5" y="44" width="4.5" height="25" fill="#ffffff"/>
   <!-- 右符桿 -->
-  <rect x="78.5" y="32" width="5.5" height="32" fill="#ffffff"/>
-  <!-- 上方粗橫槓連梁 -->
-  <polygon points="51.5,40 84,32 84,40 51.5,48" fill="#ffffff"/>
+  <rect x="75.5" y="38" width="4.5" height="25" fill="#ffffff"/>
+  <!-- 上方連梁橫槓 -->
+  <polygon points="53.5,44 80,38 80,44.5 53.5,50.5" fill="#ffffff"/>
 </svg>

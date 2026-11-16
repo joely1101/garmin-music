@@ -352,7 +352,7 @@ export default function App() {
       <div className="flex flex-col min-h-screen max-w-md mx-auto bg-neutral-950 text-neutral-100 justify-center p-6 border-x border-neutral-900 shadow-2xl">
         <div className="bg-neutral-900/80 p-6 rounded-3xl border border-neutral-800 space-y-5">
           <div className="flex flex-col items-center text-center space-y-2">
-            <img src="/favicon.svg" alt="Garmin Music Logo" className="w-14 h-14 drop-shadow-lg" />
+            <img src="/favicon.svg" alt="Garmin Music Logo" className="w-[72px] h-[72px] drop-shadow-xl" />
             <h1 className="text-lg font-bold">Garmin Music 登入</h1>
             <p className="text-xs text-neutral-400">請輸入管理者帳號與密碼 (與手錶設定相同)</p>
           </div>
@@ -418,8 +418,8 @@ export default function App() {
 
       {/* Top Header */}
       <header className="sticky top-0 z-20 backdrop-blur-md bg-neutral-950/85 px-4 py-3.5 border-b border-neutral-900 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <img src="/favicon.svg" alt="Garmin Music Logo" className="w-8 h-8 drop-shadow-md" />
+        <div className="flex items-center gap-3">
+          <img src="/favicon.svg" alt="Garmin Music Logo" className="w-[42px] h-[42px] drop-shadow-md" />
           <div>
             <div className="flex items-center gap-1.5">
               <h1 className="text-sm font-bold tracking-tight">Garmin Music</h1>
