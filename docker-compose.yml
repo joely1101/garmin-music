@@ -2,9 +2,7 @@ version: '3.8'
 
 services:
   garmin-music:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: joely1101/garmin-music:latest
     container_name: garmin-music-server
     restart: unless-stopped
     ports:

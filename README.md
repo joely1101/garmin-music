@@ -30,20 +30,51 @@
 
 ## 🚀 Docker Compose 快速部署
 
-### 1. 啟動服務
-專案目錄下已配置好多階段構建的 `Dockerfile` 與 `docker-compose.yml`，只需一行指令即可完成前端構建與服務啟動：
+### 1. 建立 `docker-compose.yml`
+您可以直接使用 Docker Hub 官方釋出的映像檔 `joely1101/garmin-music:latest`，無需本機編譯：
+
+```yaml
+version: '3.8'
+
+services:
+  garmin-music:
+    image: joely1101/garmin-music:latest
+    container_name: garmin-music-server
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      # 持久化音樂檔案與資料庫
+      - ./data/music:/app/backend/music
+      - ./data/music.db:/app/backend/music.db
+    environment:
+      - TZ=Asia/Taipei
+```
+
+### 2. 啟動服務
+在 `docker-compose.yml` 同級目錄執行：
 
 ```bash
-docker compose up -d --build
+docker compose pull && docker compose up -d
 ```
 
 服務啟動後，開啟瀏覽器即可訪問 Web 管理後台：
 👉 **`http://<您的伺服器IP>:8090`**
 
-### 2. 資料持久化路徑
+### 3. 資料持久化路徑
 音樂檔案與資料庫會自動掛載於本機 `./data/` 目錄：
 * `./data/music/`：存放所有音樂目錄與 MP3 音訊檔。
 * `./data/music.db`：SQLite 資料庫（存放曲庫中繼資料、手錶同步勾選狀態與使用者密碼）。
+
+---
+
+## 🛠️ GitHub Actions 自動化 CI/CD
+本專案已整合 GitHub Actions 工作流程（`.github/workflows/docker-publish.yml`）：
+* 只要對 `main` 分支有程式碼推送（Push），將自動觸發多架構建置，並即時發佈最新 Docker Image 至 **Docker Hub: `joely1101/garmin-music:latest`**。
+* **GitHub Repository Secrets 設定需求**：
+  若要啟用自動推送，請在您的 GitHub 儲存庫 `Settings` -> `Secrets and variables` -> `Actions` 新增：
+  1. `DOCKERHUB_USERNAME`: 您的 Docker Hub 帳號（`joely1101`）
+  2. `DOCKERHUB_TOKEN`: 您的 Docker Hub Access Token
 
 ---
 
