@@ -25,7 +25,8 @@ import {
   Mic,
   Calendar,
   Clock,
-  Sparkles
+  Sparkles,
+  RotateCw
 } from 'lucide-react';
 
 interface Track {
@@ -107,6 +108,7 @@ export default function App() {
   // Audio Player State
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState<number>(1);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Upload State
@@ -292,8 +294,25 @@ export default function App() {
       if (audioRef.current) {
         const streamUrl = `${apiBase}/api/tracks/${track.id}/stream${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`;
         audioRef.current.src = streamUrl;
+        audioRef.current.playbackRate = playbackRate;
         audioRef.current.play();
       }
+    }
+  };
+
+  // 快轉 10 秒
+  const handleForward10s = () => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = Math.min(audioRef.current.duration || Infinity, audioRef.current.currentTime + 10);
+    }
+  };
+
+  // 倍速切換：1 -> 1.2 -> 1.5 -> 1 循環
+  const handleTogglePlaybackRate = () => {
+    const nextRate = playbackRate === 1 ? 1.2 : playbackRate === 1.2 ? 1.5 : 1;
+    setPlaybackRate(nextRate);
+    if (audioRef.current) {
+      audioRef.current.playbackRate = nextRate;
     }
   };
 
@@ -1251,12 +1270,40 @@ export default function App() {
               </div>
             </div>
 
-            <button 
-              onClick={() => handlePlay(currentTrack)}
-              className="w-9 h-9 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center transition active:scale-95 shadow-md shadow-rose-600/30 shrink-0 ml-2"
-            >
-              {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0 ml-2">
+              {/* 快轉 10 秒按鍵 */}
+              <button
+                onClick={handleForward10s}
+                className="w-8 h-8 rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white flex flex-col items-center justify-center transition active:scale-90"
+                title="前進 10 秒"
+              >
+                <div className="relative flex items-center justify-center">
+                  <RotateCw className="w-4 h-4 text-neutral-300" />
+                  <span className="absolute text-[8px] font-bold text-neutral-200 mt-[1px]">10</span>
+                </div>
+              </button>
+
+              {/* 倍速切換按鍵 (1 -> 1.2 -> 1.5 -> 1) */}
+              <button
+                onClick={handleTogglePlaybackRate}
+                className={`h-8 px-2 rounded-full border text-[11px] font-bold flex items-center justify-center transition active:scale-90 ${
+                  playbackRate !== 1
+                    ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                    : 'bg-neutral-800 text-neutral-300 border-neutral-700/60 hover:text-white'
+                }`}
+                title="切換播放速度 (1x > 1.2x > 1.5x > 1x)"
+              >
+                {playbackRate}x
+              </button>
+
+              {/* 播放 / 暫停按鍵 */}
+              <button 
+                onClick={() => handlePlay(currentTrack)}
+                className="w-9 h-9 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center transition active:scale-95 shadow-md shadow-rose-600/30"
+              >
+                {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
+              </button>
+            </div>
           </div>
         </div>
       )}
