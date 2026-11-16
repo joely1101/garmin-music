@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Music, 
   UploadCloud, 
   Trash2, 
   Play, 
@@ -21,8 +20,7 @@ import {
   Square,
   ChevronRight,
   ArrowLeft,
-  Volume2,
-  Lock
+  Volume2
 } from 'lucide-react';
 
 interface Track {
@@ -354,9 +352,7 @@ export default function App() {
       <div className="flex flex-col min-h-screen max-w-md mx-auto bg-neutral-950 text-neutral-100 justify-center p-6 border-x border-neutral-900 shadow-2xl">
         <div className="bg-neutral-900/80 p-6 rounded-3xl border border-neutral-800 space-y-5">
           <div className="flex flex-col items-center text-center space-y-2">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-rose-500 to-amber-500 flex items-center justify-center shadow-lg shadow-rose-500/30">
-              <Lock className="w-6 h-6 text-white" />
-            </div>
+            <img src="/favicon.svg" alt="Garmin Music Logo" className="w-14 h-14 drop-shadow-lg" />
             <h1 className="text-lg font-bold">Garmin Music 登入</h1>
             <p className="text-xs text-neutral-400">請輸入管理者帳號與密碼 (與手錶設定相同)</p>
           </div>
@@ -423,9 +419,7 @@ export default function App() {
       {/* Top Header */}
       <header className="sticky top-0 z-20 backdrop-blur-md bg-neutral-950/85 px-4 py-3.5 border-b border-neutral-900 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-rose-500 to-amber-500 flex items-center justify-center shadow-lg shadow-rose-500/20">
-            <Music className="w-4 h-4 text-white" />
-          </div>
+          <img src="/favicon.svg" alt="Garmin Music Logo" className="w-8 h-8 drop-shadow-md" />
           <div>
             <div className="flex items-center gap-1.5">
               <h1 className="text-sm font-bold tracking-tight">Garmin Music</h1>
