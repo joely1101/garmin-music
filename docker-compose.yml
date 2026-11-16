@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  garmin-music:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: garmin-music-server
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      # 持久化音樂檔案與資料庫
+      - ./data/music:/app/backend/music
+      - ./data/music.db:/app/backend/music.db
+    environment:
+      - TZ=Asia/Taipei
