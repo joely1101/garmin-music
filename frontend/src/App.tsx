@@ -20,7 +20,12 @@ import {
   Square,
   ChevronRight,
   ArrowLeft,
-  Volume2
+  Volume2,
+  Search,
+  Mic,
+  Calendar,
+  Clock,
+  Sparkles
 } from 'lucide-react';
 
 interface Track {
@@ -43,13 +48,38 @@ interface DownloadTask {
   error?: string;
 }
 
+interface PodcastSearchResult {
+  id: string;
+  title: string;
+  artist: string;
+  feedUrl: string;
+  artwork?: string;
+  trackCount: number;
+}
+
+interface PodcastEpisode {
+  id: string;
+  title: string;
+  published: string;
+  duration?: string;
+  audio_url: string;
+  summary?: string;
+}
+
+interface PodcastChannelDetail {
+  title: string;
+  artist: string;
+  artwork?: string;
+  episodes: PodcastEpisode[];
+}
+
 export default function App() {
-  // Navigation & Views ('folder' | 'playlist' | 'garmin_sync')
-  const [activeTab, setActiveTab] = useState<'tracks' | 'download' | 'settings'>('tracks');
+  // Navigation & Views ('tracks' | 'download' | 'podcast' | 'settings')
+  const [activeTab, setActiveTab] = useState<'tracks' | 'download' | 'podcast' | 'settings'>('tracks');
   const [viewMode, setViewMode] = useState<'folder' | 'playlist' | 'garmin_sync'>('folder');
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
 
-  // Authentication State (預設未登入，強制要求登入驗證)
+  // Authentication State
   const [currentUser, setCurrentUser] = useState<string | null>(() => localStorage.getItem('garmin_user'));
   const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem('garmin_token'));
   const [loginUsername, setLoginUsername] = useState('admin');
@@ -61,7 +91,7 @@ export default function App() {
   const [changePwdMsg, setChangePwdMsg] = useState('');
   const [isChangingPwd, setIsChangingPwd] = useState(false);
 
-  // Server URL Override (For Reverse Proxy / Handheld App)
+  // Server URL Override
   const [serverUrl, setServerUrl] = useState<string>(() => localStorage.getItem('garmin_server_url') || window.location.origin);
   const [isEditingServerUrl, setIsEditingServerUrl] = useState(false);
   const [tempServerUrl, setTempServerUrl] = useState(serverUrl);
@@ -82,12 +112,21 @@ export default function App() {
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Downloader State
+  // Downloader State (YouTube / Direct URL)
   const [downloadUrl, setDownloadUrl] = useState('');
   const [targetFolder, setTargetFolder] = useState('1116');
   const [downloadPlaylist, setDownloadPlaylist] = useState(false);
   const [isSubmittingDownload, setIsSubmittingDownload] = useState(false);
   const [tasks, setTasks] = useState<{ [key: string]: DownloadTask }>({});
+
+  // Podcast State
+  const [podcastQuery, setPodcastQuery] = useState('');
+  const [isSearchingPodcast, setIsSearchingPodcast] = useState(false);
+  const [podcastResults, setPodcastResults] = useState<PodcastSearchResult[]>([]);
+  const [selectedPodcast, setSelectedPodcast] = useState<PodcastSearchResult | null>(null);
+  const [channelDetail, setChannelDetail] = useState<PodcastChannelDetail | null>(null);
+  const [isLoadingEpisodes, setIsLoadingEpisodes] = useState(false);
+  const [downloadingEpisodeUrls, setDownloadingEpisodeUrls] = useState<{ [key: string]: boolean }>({});
 
   const apiBase = serverUrl.replace(/\/+$/, '');
 
@@ -97,7 +136,7 @@ export default function App() {
     return fetch(fullPath, options);
   };
 
-  // Fetch Tracks & Folders (只有在已登入時呼叫)
+  // Fetch Tracks & Folders
   const fetchFolders = async () => {
     if (!currentUser) return;
     try {
@@ -218,7 +257,6 @@ export default function App() {
   // Sync Checkbox Toggle
   const handleToggleSync = async (track: Track) => {
     const nextState = track.sync_enabled === 1 ? 0 : 1;
-    // Optimistic UI update
     setTracks(tracks.map(t => t.id === track.id ? { ...t, sync_enabled: nextState } : t));
     try {
       await apiFetch(`/api/tracks/${track.id}/sync?enabled=${nextState === 1}`, { method: 'POST' });
@@ -319,7 +357,7 @@ export default function App() {
     fetchTracks();
   };
 
-  // Download Handler
+  // YouTube / Direct Download Handler
   const handleStartDownload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!downloadUrl.trim()) return;
@@ -343,6 +381,73 @@ export default function App() {
       alert('無法發送下載請求');
     } finally {
       setIsSubmittingDownload(false);
+    }
+  };
+
+  // Podcast Search Handler
+  const handleSearchPodcast = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!podcastQuery.trim()) return;
+    setIsSearchingPodcast(true);
+    setSelectedPodcast(null);
+    setChannelDetail(null);
+    try {
+      const res = await apiFetch(`/api/podcast/search?q=${encodeURIComponent(podcastQuery.trim())}`);
+      if (res.ok) {
+        const data = await res.json();
+        setPodcastResults(data);
+      } else {
+        alert('搜尋 Podcast 失敗');
+      }
+    } catch (err) {
+      alert('搜尋失敗，請檢查網路連線');
+    } finally {
+      setIsSearchingPodcast(false);
+    }
+  };
+
+  // Select Podcast & Load Episodes
+  const handleSelectPodcast = async (podcast: PodcastSearchResult) => {
+    setSelectedPodcast(podcast);
+    setIsLoadingEpisodes(true);
+    try {
+      const res = await apiFetch(`/api/podcast/episodes?feed_url=${encodeURIComponent(podcast.feedUrl)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setChannelDetail(data);
+      } else {
+        alert('無法讀取節目單集');
+      }
+    } catch (err) {
+      alert('連線失敗');
+    } finally {
+      setIsLoadingEpisodes(false);
+    }
+  };
+
+  // Download Single Episode
+  const handleDownloadEpisode = async (ep: PodcastEpisode) => {
+    setDownloadingEpisodeUrls(prev => ({ ...prev, [ep.audio_url]: true }));
+    try {
+      const res = await apiFetch('/api/download/direct', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audio_url: ep.audio_url,
+          title: ep.title,
+          artist: channelDetail?.title || selectedPodcast?.title || 'Podcast',
+          target_folder: targetFolder
+        })
+      });
+      if (res.ok) {
+        fetchTasks();
+      } else {
+        alert('加入下載排程失敗');
+      }
+    } catch (err) {
+      alert('連線失敗');
+    } finally {
+      setDownloadingEpisodeUrls(prev => ({ ...prev, [ep.audio_url]: false }));
     }
   };
 
@@ -540,7 +645,7 @@ export default function App() {
               </form>
             )}
 
-            {/* 1. 手錶歌單模式頂部說明提示 */}
+            {/* 手錶歌單模式頂部說明提示 */}
             {viewMode === 'garmin_sync' && (
               <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-center justify-between">
                 <span>此處僅顯示打勾、會推送到手錶的歌曲 ({visibleTracks.length} 首)</span>
@@ -557,7 +662,7 @@ export default function App() {
               </div>
             )}
 
-            {/* 2. 目錄模式下的根目錄導覽 (Folder List) */}
+            {/* 目錄模式下的根目錄導覽 */}
             {viewMode === 'folder' && !selectedFolder && (
               <div className="space-y-2">
                 <span className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wider px-1">
@@ -590,10 +695,9 @@ export default function App() {
               </div>
             )}
 
-            {/* 3. 歌曲列表 (歌單模式 / 目錄進入 / 手錶歌單) */}
+            {/* 歌曲列表 (歌單模式 / 目錄進入 / 手錶歌單) */}
             {(viewMode !== 'folder' || selectedFolder) && (
               <div className="space-y-2">
-                {/* 麵包屑 / 目錄快速操作 */}
                 {selectedFolder && (
                   <div className="flex items-center justify-between py-1 px-1">
                     <button 
@@ -621,7 +725,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 歌曲列表 */}
                 {visibleTracks.length === 0 ? (
                   <div className="py-12 text-center text-neutral-600 text-xs">
                     {viewMode === 'garmin_sync' ? '手錶歌單目前是空的，請至目錄或歌單模式將歌曲打勾！' : '這個目錄目前沒有任何 MP3 檔案'}
@@ -639,7 +742,6 @@ export default function App() {
                             : 'bg-neutral-900/40 border-neutral-900/80 hover:bg-neutral-900'
                         }`}
                       >
-                        {/* Sync Checkbox */}
                         <button 
                           onClick={() => handleToggleSync(track)}
                           className="mr-2 text-neutral-500 hover:text-rose-400 transition"
@@ -652,7 +754,6 @@ export default function App() {
                           )}
                         </button>
 
-                        {/* Play Button & Info */}
                         <div className="flex items-center gap-2.5 min-w-0 flex-1">
                           <button 
                             onClick={() => handlePlay(track)}
@@ -679,7 +780,6 @@ export default function App() {
                           </div>
                         </div>
 
-                        {/* Actions */}
                         <div className="flex items-center gap-1 pl-2">
                           <button 
                             onClick={() => handleDelete(track.id)}
@@ -698,16 +798,16 @@ export default function App() {
           </div>
         )}
 
-        {/* Tab 2: 音訊下載 (Download - YouTube & Podcast) */}
+        {/* Tab 2: YouTube / 音訊網址下載 (Download) */}
         {activeTab === 'download' && (
           <div className="space-y-4">
             <div className="bg-neutral-900/60 p-4 rounded-3xl border border-neutral-900 space-y-3">
               <div className="flex items-center gap-2">
                 <Radio className="w-5 h-5 text-rose-500" />
-                <h2 className="text-sm font-bold text-neutral-200">YouTube Music / Podcast 下載</h2>
+                <h2 className="text-sm font-bold text-neutral-200">YouTube Music / 網址轉 MP3</h2>
               </div>
               <p className="text-xs text-neutral-400 leading-relaxed">
-                貼上 YouTube 影片/音樂網址或 Podcast RSS 鏈結，系統將自動以 320k MP3 存入指定的資料夾中。
+                貼上 YouTube 影片/音樂網址，系統將自動以 320k MP3 存入指定的資料夾中。
               </p>
 
               <form onSubmit={handleStartDownload} className="space-y-2.5 pt-1">
@@ -729,7 +829,7 @@ export default function App() {
                   type="text" 
                   value={downloadUrl}
                   onChange={(e) => setDownloadUrl(e.target.value)}
-                  placeholder="https://music.youtube.com/... 或 RSS..." 
+                  placeholder="https://music.youtube.com/watch?v=..." 
                   className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-xs text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-rose-500 transition"
                 />
 
@@ -795,10 +895,195 @@ export default function App() {
           </div>
         )}
 
-        {/* Tab 3: 伺服器與 Garmin 認證設定 (Settings) */}
+        {/* Tab 3: 全新獨立 Podcast 探索與下載 (Podcast) */}
+        {activeTab === 'podcast' && (
+          <div className="space-y-4">
+            {/* 頂部搜尋與存放資料夾配置 */}
+            <div className="bg-neutral-900/60 p-4 rounded-3xl border border-neutral-900 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Mic className="w-5 h-5 text-amber-500" />
+                  <h2 className="text-sm font-bold text-neutral-200">Podcast 探索與下載</h2>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-neutral-500">存入:</span>
+                  <select 
+                    value={targetFolder}
+                    onChange={(e) => setTargetFolder(e.target.value)}
+                    className="px-2 py-1 bg-neutral-950 border border-neutral-800 text-[11px] rounded-lg text-neutral-200 focus:outline-none"
+                  >
+                    {folders.map(f => (
+                      <option key={f} value={f}>📁 {f}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* 搜尋表單 */}
+              <form onSubmit={handleSearchPodcast} className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 text-neutral-500 absolute left-3 top-2.5" />
+                  <input 
+                    type="text" 
+                    value={podcastQuery}
+                    onChange={(e) => setPodcastQuery(e.target.value)}
+                    placeholder="輸入節目名稱 (例如: 股癌, 百靈果...)"
+                    className="w-full pl-9 pr-3 py-2 rounded-xl bg-neutral-950 border border-neutral-800 text-xs text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-amber-500 transition"
+                  />
+                </div>
+                <button 
+                  type="submit"
+                  disabled={isSearchingPodcast || !podcastQuery.trim()}
+                  className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold flex items-center justify-center gap-1 transition active:scale-95 disabled:opacity-50 shrink-0"
+                >
+                  {isSearchingPodcast ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span>搜尋</span>}
+                </button>
+              </form>
+            </div>
+
+            {/* 節目詳情與單集列表 (當點選某個節目時) */}
+            {selectedPodcast ? (
+              <div className="space-y-3">
+                {/* 節目頭部卡片 */}
+                <div className="p-3.5 rounded-2xl bg-neutral-900 border border-neutral-800 space-y-2">
+                  <button 
+                    onClick={() => { setSelectedPodcast(null); setChannelDetail(null); }}
+                    className="flex items-center gap-1 text-xs text-amber-400 font-semibold hover:underline"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>返回搜尋結果</span>
+                  </button>
+
+                  <div className="flex items-center gap-3 pt-1">
+                    {selectedPodcast.artwork ? (
+                      <img src={selectedPodcast.artwork} alt={selectedPodcast.title} className="w-14 h-14 rounded-xl object-cover shrink-0 border border-neutral-800" />
+                    ) : (
+                      <div className="w-14 h-14 rounded-xl bg-neutral-800 flex items-center justify-center text-neutral-500 shrink-0">
+                        <Mic className="w-6 h-6" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-sm font-bold text-neutral-100 truncate">{selectedPodcast.title}</h3>
+                      <p className="text-xs text-neutral-400 truncate mt-0.5">{selectedPodcast.artist}</p>
+                      <p className="text-[10px] text-amber-500/80 font-mono mt-1">
+                        {channelDetail ? `最新收錄 ${channelDetail.episodes.length} 集` : '正在解析單集...'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 單集列表 */}
+                {isLoadingEpisodes ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center text-neutral-500 space-y-2">
+                    <Loader2 className="w-7 h-7 animate-spin text-amber-500" />
+                    <p className="text-xs">正在從 RSS 讀取最新單集音訊...</p>
+                  </div>
+                ) : channelDetail?.episodes && channelDetail.episodes.length > 0 ? (
+                  <div className="space-y-2">
+                    {channelDetail.episodes.map(ep => {
+                      const isDownloading = downloadingEpisodeUrls[ep.audio_url];
+                      return (
+                        <div key={ep.id} className="p-3 rounded-2xl bg-neutral-900/40 border border-neutral-900/80 hover:bg-neutral-900 space-y-2">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <h4 className="text-xs font-bold text-neutral-200 line-clamp-2 leading-relaxed">
+                                {ep.title}
+                              </h4>
+                              <div className="flex items-center gap-2 mt-1.5 text-[10px] text-neutral-500">
+                                {ep.published && (
+                                  <span className="flex items-center gap-1">
+                                    <Calendar className="w-3 h-3" />
+                                    {ep.published.substring(0, 16)}
+                                  </span>
+                                )}
+                                {ep.duration && (
+                                  <span className="flex items-center gap-1">
+                                    <Clock className="w-3 h-3" />
+                                    {ep.duration}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <button 
+                              disabled={isDownloading}
+                              onClick={() => handleDownloadEpisode(ep)}
+                              className="px-2.5 py-1.5 rounded-xl bg-neutral-800 hover:bg-amber-600 hover:text-white text-neutral-300 text-xs font-semibold flex items-center gap-1 shrink-0 transition active:scale-95 disabled:opacity-50"
+                              title="下載到伺服器與手錶"
+                            >
+                              {isDownloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                              <span>下載</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="py-10 text-center text-neutral-500 text-xs">
+                    未找到可下載的 MP3 單集
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* 搜尋結果列表 */
+              <div className="space-y-2">
+                <span className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wider px-1">
+                  {podcastResults.length > 0 ? `搜尋結果 (${podcastResults.length})` : '推薦熱門節目'}
+                </span>
+
+                {podcastResults.length === 0 && !isSearchingPodcast && (
+                  <div className="py-12 text-center text-neutral-600 space-y-2">
+                    <Sparkles className="w-8 h-8 mx-auto stroke-[1.2] text-neutral-700" />
+                    <p className="text-xs">請在上方搜尋框輸入關鍵字開始探索</p>
+                    <div className="flex flex-wrap justify-center gap-1.5 pt-2">
+                      {['百靈果', '股癌', '台通', '敏迪選讀', '科技島讀'].map(tag => (
+                        <button 
+                          key={tag}
+                          onClick={() => { setPodcastQuery(tag); }}
+                          className="px-2.5 py-1 rounded-full bg-neutral-900 border border-neutral-800 text-[11px] text-neutral-400 hover:text-white hover:border-amber-500/50"
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {podcastResults.map(podcast => (
+                  <div 
+                    key={podcast.id}
+                    onClick={() => handleSelectPodcast(podcast)}
+                    className="flex items-center justify-between p-3 rounded-2xl bg-neutral-900/40 border border-neutral-900/80 hover:bg-neutral-900 cursor-pointer transition active:scale-98"
+                  >
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      {podcast.artwork ? (
+                        <img src={podcast.artwork} alt={podcast.title} className="w-12 h-12 rounded-xl object-cover shrink-0 border border-neutral-800" />
+                      ) : (
+                        <div className="w-12 h-12 rounded-xl bg-neutral-800 flex items-center justify-center text-neutral-500 shrink-0">
+                          <Mic className="w-5 h-5" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-bold text-neutral-200 truncate">{podcast.title}</p>
+                        <p className="text-[11px] text-neutral-400 truncate mt-0.5">{podcast.artist}</p>
+                        <p className="text-[10px] text-neutral-500 mt-1 font-mono">
+                          {podcast.trackCount ? `約 ${podcast.trackCount} 集` : 'Podcast'}
+                        </p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-neutral-600 shrink-0" />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 4: 伺服器與 Garmin 認證設定 (Settings) */}
         {activeTab === 'settings' && (
           <div className="space-y-4">
-            {/* 1. Server URL 自訂設定 (支援反向代理 / 跨網域存取) */}
+            {/* 1. Server URL 自訂設定 */}
             <div className="bg-neutral-900/60 p-4 rounded-3xl border border-neutral-900 space-y-3">
               <div className="flex items-center gap-2">
                 <Globe className="w-5 h-5 text-sky-400" />
@@ -930,7 +1215,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Mobile Bottom Navigation Bar */}
+      {/* Mobile Bottom Navigation Bar (4 個獨立清晰的導航標籤) */}
       <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-neutral-950/90 backdrop-blur-md border-t border-neutral-900 flex items-center justify-around py-2.5 z-40">
         <button 
           onClick={() => setActiveTab('tracks')}
@@ -948,8 +1233,18 @@ export default function App() {
             activeTab === 'download' ? 'text-rose-500 font-semibold' : 'text-neutral-500 hover:text-neutral-300'
           }`}
         >
-          <Download className="w-5 h-5" />
+          <Radio className="w-5 h-5" />
           <span className="text-[10px]">音訊下載</span>
+        </button>
+
+        <button 
+          onClick={() => setActiveTab('podcast')}
+          className={`flex flex-col items-center gap-1 transition ${
+            activeTab === 'podcast' ? 'text-amber-500 font-semibold' : 'text-neutral-500 hover:text-neutral-300'
+          }`}
+        >
+          <Mic className="w-5 h-5" />
+          <span className="text-[10px]">Podcast</span>
         </button>
 
         <button 

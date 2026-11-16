@@ -503,27 +503,57 @@ async def upload_mp3(folder: str = Form("1116"), file: UploadFile = File(...)):
         
     return {"status": "success", "track": {"id": track_id, **meta, "rel_path": rel_path, "folder": clean_folder}}
 
-# ----------------- Downloader (YouTube & RSS Podcast) -----------------
+# ----------------- Downloader & Podcast Exploration -----------------
 class DownloadRequest(BaseModel):
     url: str
     target_folder: str = "1116"
     download_playlist: bool = False
+    custom_title: Optional[str] = None
+    custom_artist: Optional[str] = None
 
-def run_download_task(task_id: str, url: str, target_folder: str = "1116", download_playlist: bool = False):
-    DOWNLOAD_TASKS[task_id] = {"status": "processing", "progress": "Starting...", "title": url, "error": None}
+class DirectAudioDownloadRequest(BaseModel):
+    audio_url: str
+    title: str
+    artist: str = "Podcast"
+    target_folder: str = "1116"
+
+def run_download_task(task_id: str, url: str, target_folder: str = "1116", download_playlist: bool = False, custom_title: Optional[str] = None, custom_artist: Optional[str] = None):
+    display_title = custom_title or url
+    DOWNLOAD_TASKS[task_id] = {"status": "processing", "progress": "Starting...", "title": display_title, "error": None}
     
     target_dir = MUSIC_DIR / target_folder
-    target_dir.mkdir(exist_ok=True)
+    target_dir.mkdir(parents=True, exist_ok=True)
     
     try:
+        # Check if direct mp3 url or podcast RSS
+        is_direct_audio = url.lower().endswith(".mp3") or "audio" in url.lower() or custom_title is not None
         is_rss = False
-        try:
-            feed = feedparser.parse(url)
-            if feed.entries and len(feed.entries) > 0 and any("enclosures" in entry for entry in feed.entries):
-                is_rss = True
-        except Exception:
-            is_rss = False
+        if not is_direct_audio:
+            try:
+                feed = feedparser.parse(url)
+                if feed.entries and len(feed.entries) > 0 and any("enclosures" in entry for entry in feed.entries):
+                    is_rss = True
+            except Exception:
+                is_rss = False
             
+        if is_direct_audio:
+            ep_title = custom_title or f"Audio_{uuid.uuid4().hex[:6]}"
+            clean_title = re.sub(r'[\\/*?:"<>|]', "", ep_title)[:60]
+            target_file = target_dir / f"{clean_title}.mp3"
+            
+            DOWNLOAD_TASKS[task_id]["title"] = ep_title
+            DOWNLOAD_TASKS[task_id]["progress"] = f"Downloading: {ep_title}..."
+            
+            import urllib.request
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=60) as resp, open(target_file, "wb") as f:
+                shutil.copyfileobj(resp, f)
+                
+            scan_and_sync_files()
+            DOWNLOAD_TASKS[task_id]["status"] = "completed"
+            DOWNLOAD_TASKS[task_id]["progress"] = "Completed"
+            return
+
         if is_rss:
             DOWNLOAD_TASKS[task_id]["progress"] = "Parsing Podcast RSS feed..."
             latest_entry = None
@@ -548,7 +578,9 @@ def run_download_task(task_id: str, url: str, target_folder: str = "1116", downl
             target_file = target_dir / f"{clean_title}.mp3"
             
             import urllib.request
-            urllib.request.urlretrieve(audio_url, target_file)
+            req = urllib.request.Request(audio_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=60) as resp, open(target_file, "wb") as f:
+                shutil.copyfileobj(resp, f)
             
             scan_and_sync_files()
             DOWNLOAD_TASKS[task_id]["status"] = "completed"
@@ -608,12 +640,75 @@ def run_download_task(task_id: str, url: str, target_folder: str = "1116", downl
 @app.post("/api/download")
 def start_download(req: DownloadRequest, background_tasks: BackgroundTasks):
     task_id = str(uuid.uuid4())
-    background_tasks.add_task(run_download_task, task_id, req.url, req.target_folder, req.download_playlist)
+    background_tasks.add_task(run_download_task, task_id, req.url, req.target_folder, req.download_playlist, req.custom_title, req.custom_artist)
+    return {"task_id": task_id, "status": "queued"}
+
+@app.post("/api/download/direct")
+def start_direct_download(req: DirectAudioDownloadRequest, background_tasks: BackgroundTasks):
+    task_id = str(uuid.uuid4())
+    background_tasks.add_task(run_download_task, task_id, req.audio_url, req.target_folder, False, req.title, req.artist)
     return {"task_id": task_id, "status": "queued"}
 
 @app.get("/api/download/tasks")
 def get_download_tasks():
     return DOWNLOAD_TASKS
+
+# ----------------- Podcast iTunes Directory Search API -----------------
+@app.get("/api/podcast/search")
+def search_podcast(q: str = Query(..., min_length=1)):
+    import urllib.request, urllib.parse, json
+    encoded_q = urllib.parse.quote(q.strip())
+    url = f"https://itunes.apple.com/search?term={encoded_q}&media=podcast&entity=podcast&limit=15"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            results = []
+            for item in data.get("results", []):
+                feed_url = item.get("feedUrl")
+                if feed_url:
+                    results.append({
+                        "id": str(item.get("collectionId")),
+                        "title": item.get("collectionName"),
+                        "artist": item.get("artistName"),
+                        "feedUrl": feed_url,
+                        "artwork": item.get("artworkUrl600") or item.get("artworkUrl100"),
+                        "trackCount": item.get("trackCount", 0)
+                    })
+            return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Podcast search failed: {str(e)}")
+
+@app.get("/api/podcast/episodes")
+def get_podcast_episodes(feed_url: str = Query(...)):
+    try:
+        feed = feedparser.parse(feed_url)
+        episodes = []
+        for e in feed.entries[:30]:  # 取最新 30 集
+            audio_url = None
+            size = 0
+            for enc in getattr(e, "enclosures", []):
+                if "audio" in enc.get("type", "") or enc.get("href", "").endswith(".mp3"):
+                    audio_url = enc.get("href")
+                    size = enc.get("length", 0)
+                    break
+            if audio_url:
+                episodes.append({
+                    "id": getattr(e, "id", audio_url),
+                    "title": e.get("title", "未命名單集"),
+                    "published": e.get("published", ""),
+                    "duration": getattr(e, "itunes_duration", None),
+                    "audio_url": audio_url,
+                    "summary": getattr(e, "summary", "")[:200] if getattr(e, "summary", None) else ""
+                })
+        return {
+            "title": feed.feed.get("title", "Podcast"),
+            "artist": feed.feed.get("author", "Podcast Author"),
+            "artwork": getattr(feed.feed, "image", {}).get("href") if getattr(feed.feed, "image", None) else None,
+            "episodes": episodes
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse podcast episodes: {str(e)}")
 
 # ----------------- Serve Frontend Static Files -----------------
 if FRONTEND_DIST.exists():
