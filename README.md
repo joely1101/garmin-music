@@ -44,11 +44,13 @@ services:
     ports:
       - "8090:8090"
     volumes:
-      # 持久化音樂檔案與資料庫
+      # 持久化音樂檔案與資料庫（目錄掛載，自動建立資料庫檔案）
       - ./data/music:/app/backend/music
-      - ./data/music.db:/app/backend/music.db
+      - ./data/db:/app/backend/data
     environment:
       - TZ=Asia/Taipei
+      - DATA_DIR=/app/backend/data
+      - MUSIC_DIR=/app/backend/music
 ```
 
 ### 2. 啟動服務

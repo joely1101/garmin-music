@@ -21,11 +21,14 @@ import yt_dlp
 import feedparser
 
 BASE_DIR = Path(__file__).resolve().parent
-MUSIC_DIR = BASE_DIR / "music"
-FRONTEND_DIST = BASE_DIR.parent / "frontend" / "dist"
-DB_PATH = BASE_DIR / "music.db"
+DATA_DIR = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-MUSIC_DIR.mkdir(exist_ok=True)
+MUSIC_DIR = Path(os.getenv("MUSIC_DIR", BASE_DIR / "music"))
+MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+
+FRONTEND_DIST = BASE_DIR.parent / "frontend" / "dist"
+DB_PATH = DATA_DIR / "music.db"
 
 # ----------------- Database Setup -----------------
 def get_db():
