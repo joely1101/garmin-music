@@ -1,33 +1,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
   <defs>
-    <linearGradient id="opt2_grad" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="opt3_bg" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#f43f5e"/>
       <stop offset="100%" stop-color="#fb923c"/>
     </linearGradient>
   </defs>
-  <!-- 上錶帶 -->
-  <path d="M42 6 L78 6 L78 26 L42 26 Z" fill="#1e293b" rx="4"/>
-  <rect x="52" y="11" width="16" height="3" rx="1.5" fill="#334155"/>
+  <!-- 上錶帶 (含錶扣金屬圈) -->
+  <rect x="43" y="3" width="34" height="24" rx="4" fill="#18181b"/>
+  <rect x="47" y="7" width="26" height="5" rx="2" fill="#71717a"/> <!-- 金屬固定環 -->
 
-  <!-- 下錶帶 -->
-  <path d="M42 94 L78 94 L78 114 L42 114 Z" fill="#1e293b" rx="4"/>
-  <rect x="52" y="100" width="16" height="3" rx="1.5" fill="#334155"/>
+  <!-- 下錶帶 (含手錶穿孔) -->
+  <rect x="43" y="93" width="34" height="24" rx="4" fill="#18181b"/>
+  <circle cx="60" cy="100" r="2.5" fill="#27272a"/>
+  <circle cx="60" cy="107" r="2.5" fill="#27272a"/>
+  <circle cx="60" cy="114" r="2.5" fill="#27272a"/>
 
-  <!-- 右側數位錶冠 (Digital Crown) 與實體按鈕 -->
-  <rect x="94" y="40" width="5.5" height="15" rx="2.5" fill="#cbd5e1"/>
-  <rect x="94" y="66" width="4" height="12" rx="2" fill="#64748b"/>
+  <!-- 手錶機身主體側邊 4 顆螺栓/護橋按鍵 -->
+  <rect x="18" y="42" width="5" height="9" rx="2" fill="#71717a"/>
+  <rect x="18" y="68" width="5" height="9" rx="2" fill="#71717a"/>
+  <rect x="97" y="42" width="5" height="9" rx="2" fill="#f43f5e"/> <!-- 啟動紅鍵 -->
+  <rect x="97" y="68" width="5" height="9" rx="2" fill="#71717a"/>
 
-  <!-- 圓角方形金屬錶身 -->
-  <rect x="24" y="24" width="72" height="72" rx="22" fill="#090d16" stroke="#475569" stroke-width="3"/>
-  <rect x="29" y="29" width="62" height="62" rx="17" fill="url(#opt2_grad)"/>
+  <!-- 圓形大錶盤本體 -->
+  <circle cx="60" cy="60" r="39" fill="#27272a" stroke="#3f3f46" stroke-width="3"/>
+  <circle cx="60" cy="60" r="33" fill="#09090b"/>
+  <circle cx="60" cy="60" r="28" fill="url(#opt3_bg)"/>
 
-  <!-- 音波擴散同心圓圈 -->
-  <circle cx="60" cy="60" r="24" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.45"/>
-
-  <!-- 靈動十六分音符 (帶雙旗尾) -->
-  <ellipse cx="51" cy="69" rx="7.5" ry="5.5" fill="#ffffff" transform="rotate(-15 51 69)"/>
-  <rect x="56.5" y="38" width="4" height="31" fill="#ffffff"/>
-  <!-- 雙音符尾旗 (流線雙弧) -->
-  <path d="M60.5 38 C72 38, 77 46, 73 54 C70 48, 66 45, 60.5 45 Z" fill="#ffffff"/>
-  <path d="M60.5 47 C72 47, 77 55, 73 63 C70 57, 66 54, 60.5 54 Z" fill="#ffffff"/>
+  <!-- 音樂播放三角箭頭與音符結合 -->
+  <polygon points="50,47 50,73 72,60" fill="#ffffff" opacity="0.95"/>
+  <circle cx="69" cy="49" r="4.5" fill="#ffffff"/>
+  <rect x="67" y="49" width="3.5" height="15" fill="#ffffff"/>
 </svg>
