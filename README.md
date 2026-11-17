@@ -10,7 +10,7 @@
    * 完美支援 Garmin 手錶端開源 App（如 [YuMusic Garmin Music App](https://github.com/isyuricunha/yumusic-garmin-music-app)）。
    * 內建符合 Garmin Connect IQ 要求的高相容 HTTP 回應標頭（`Content-Length`、`audio/mpeg`）。
 2. **目錄分層管理與單曲手錶同步控制**：
-   * **目錄模式**：檔案依資料夾分類（如 `1116`），支援單一資料夾快速全選/取消手錶同步。
+   * **目錄模式**：檔案依資料夾分類（如 `音樂`），支援單一資料夾快速全選/取消手錶同步。
    * **歌單模式**：平鋪瀏覽全庫歌曲。
    * **手錶歌單**：獨立分頁僅列出有勾選推送到手錶的曲目，手錶容量一目了然。
 3. **YouTube Music & Podcast 轉 MP3 下載器**：

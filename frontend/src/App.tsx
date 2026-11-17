@@ -161,7 +161,7 @@ export default function App() {
 
   // Downloader State (YouTube / Direct URL)
   const [downloadUrl, setDownloadUrl] = useState('');
-  const [targetFolder, setTargetFolder] = useState('1116');
+  const [targetFolder, setTargetFolder] = useState('音樂');
   const [downloadPlaylist, setDownloadPlaylist] = useState(false);
   const [isSubmittingDownload, setIsSubmittingDownload] = useState(false);
   const [tasks, setTasks] = useState<{ [key: string]: DownloadTask }>({});
@@ -580,7 +580,7 @@ export default function App() {
     if (!files || files.length === 0) return;
 
     setIsUploading(true);
-    const folder = selectedFolder || targetFolder || '1116';
+    const folder = selectedFolder || targetFolder || '音樂';
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const formData = new FormData();
@@ -1142,7 +1142,7 @@ export default function App() {
                     {folders.map(f => (
                       <option key={f} value={f}>{f}</option>
                     ))}
-                    {!folders.includes('1116') && <option value="1116">1116 (預設)</option>}
+                    {!folders.includes('音樂') && <option value="音樂">音樂 (預設)</option>}
                   </select>
                 </div>
 
@@ -1227,7 +1227,7 @@ export default function App() {
                     {folders.map(f => (
                       <option key={f} value={f}>{f}</option>
                     ))}
-                    {!folders.includes('1116') && <option value="1116">1116</option>}
+                    {!folders.includes('音樂') && <option value="音樂">音樂</option>}
                   </select>
                 </div>
               </div>

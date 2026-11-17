@@ -726,13 +726,13 @@ def delete_track(track_id: str, current_user: str = Depends(get_current_user_fro
     return {"status": "deleted", "id": track_id}
 
 @app.post("/api/tracks/upload")
-async def upload_mp3(folder: str = Form("1116"), file: UploadFile = File(...), current_user: str = Depends(get_current_user_from_req)):
+async def upload_mp3(folder: str = Form("音樂"), file: UploadFile = File(...), current_user: str = Depends(get_current_user_from_req)):
     if not file.filename.lower().endswith(".mp3"):
         raise HTTPException(status_code=400, detail="Only .mp3 files are allowed")
     
     clean_folder = re.sub(r'[\\/*?:"<>|]', "", folder).strip()
     if not clean_folder:
-        clean_folder = "1116"
+        clean_folder = "音樂"
         
     target_folder = MUSIC_DIR / current_user / clean_folder
     target_folder.mkdir(parents=True, exist_ok=True)
@@ -764,7 +764,7 @@ async def upload_mp3(folder: str = Form("1116"), file: UploadFile = File(...), c
 # ----------------- Downloader & Podcast Exploration -----------------
 class DownloadRequest(BaseModel):
     url: str
-    target_folder: str = "1116"
+    target_folder: str = "音樂"
     download_playlist: bool = False
     custom_title: Optional[str] = None
     custom_artist: Optional[str] = None
@@ -773,9 +773,9 @@ class DirectAudioDownloadRequest(BaseModel):
     audio_url: str
     title: str
     artist: str = "Podcast"
-    target_folder: str = "1116"
+    target_folder: str = "音樂"
 
-def run_download_task(task_id: str, url: str, target_folder: str = "1116", download_playlist: bool = False, custom_title: Optional[str] = None, custom_artist: Optional[str] = None, current_user: str = "admin"):
+def run_download_task(task_id: str, url: str, target_folder: str = "音樂", download_playlist: bool = False, custom_title: Optional[str] = None, custom_artist: Optional[str] = None, current_user: str = "admin"):
     display_title = custom_title or url
     DOWNLOAD_TASKS[task_id] = {"status": "processing", "progress": "Starting...", "title": display_title, "url": url, "user": current_user, "error": None}
     
