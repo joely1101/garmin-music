@@ -276,6 +276,26 @@ scan_and_sync_files()
 # ----------------- FastAPI App -----------------
 app = FastAPI(title="Garmin Modern Subsonic & Music Server")
 
+@app.middleware("http")
+async def log_garmin_requests(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/rest/"):
+        client_ip = request.client.host if request.client else "unknown"
+        query_params = dict(request.query_params)
+        # 隱藏敏感 token / password 內容以保護隱私
+        safe_params = {k: ("***" if k in ("p", "t", "password") else v) for k, v in query_params.items()}
+        print(f"\n[GARMIN REST INCOMING] >>> {request.method} {path} from {client_ip}")
+        print(f"                       Params: {safe_params}")
+        print(f"                       User-Agent: {request.headers.get('user-agent', 'none')}")
+        
+        response = await call_next(request)
+        
+        print(f"[GARMIN REST RESPONSE] <<< {request.method} {path} -> Status {response.status_code}")
+        if path.endswith(("/stream.view", "/download.view")):
+            print(f"                       Headers: Content-Type={response.headers.get('content-type')}, Content-Length={response.headers.get('content-length')}")
+        return response
+    return await call_next(request)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -397,19 +417,34 @@ def subsonic_get_random_songs(size: int = Query(20), user: str = Depends(verify_
 @app.get("/rest/stream.view")
 @app.get("/rest/download.view")
 def subsonic_stream(id: str = Query(...), user: str = Depends(verify_subsonic_auth)):
+    print(f"\n[STREAM DEBUG] Garmin requested song id='{id}' for user='{user}'")
     with get_db() as conn:
         track = conn.execute("SELECT * FROM tracks WHERE id = ? AND user = ?", (id, user)).fetchone()
         if not track:
+            # 檢查是否有這首歌但屬於別的 user，方便釐清隔離問題
+            other = conn.execute("SELECT user, title FROM tracks WHERE id = ?", (id,)).fetchone()
+            if other:
+                print(f"[STREAM ERROR] Track '{id}' exists but belongs to user '{other['user']}', not '{user}'! (Title: {other['title']})")
+            else:
+                print(f"[STREAM ERROR] Track '{id}' not found in DB at all for user '{user}'!")
             raise HTTPException(status_code=404, detail="Track not found")
+            
         file_path = MUSIC_DIR / track["rel_path"]
+        print(f"[STREAM DEBUG] Track found: '{track['title']}', rel_path='{track['rel_path']}'")
+        print(f"[STREAM DEBUG] Absolute disk path: {file_path}")
+        
         if not file_path.exists():
+            print(f"[STREAM ERROR] File missing on disk! Expected at: {file_path}")
             raise HTTPException(status_code=404, detail="File not found on disk")
         
         file_size = file_path.stat().st_size
+        print(f"[STREAM SUCCESS] File verified! Size={file_size} bytes ({round(file_size/1024/1024, 2)} MB). Serving to Garmin watch...")
+        
         headers = {
             "Content-Length": str(file_size),
             "Accept-Ranges": "bytes",
-            "Content-Type": "audio/mpeg"
+            "Content-Type": "audio/mpeg",
+            "Content-Disposition": f'attachment; filename="{Path(track["rel_path"]).name}"'
         }
         return FileResponse(
             path=file_path,
