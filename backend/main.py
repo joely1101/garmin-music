@@ -922,6 +922,9 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }],
+            'postprocessor_args': {
+                'ExtractAudio+ffmpeg': ['-ar', '44100', '-ac', '2', '-id3v2_version', '3']
+            },
             'outtmpl': str(target_dir / '%(title)s.%(ext)s'),
             'progress_hooks': [progress_hook],
             'noplaylist': not download_playlist,
