@@ -1617,59 +1617,61 @@ export default function App() {
               </div>
             )}
 
-            {/* 4. Server URL 自訂設定 */}
-            <div className="bg-neutral-900/60 p-4 rounded-3xl border border-neutral-900 space-y-3">
-              <div className="flex items-center gap-2">
-                <Globe className="w-5 h-5 text-sky-400" />
-                <h2 className="text-sm font-bold text-neutral-200">伺服器連線網址 (Server URL)</h2>
-              </div>
-              <p className="text-xs text-neutral-400 leading-relaxed">
-                若有架設 Nginx / Cloudflare 反向代理，或在手機 App (APK) 啟動時需要指定連線端點，可在此修改：
-              </p>
+            {/* 4. Server URL 自訂設定 (僅 Admin / Root 可見與修改) */}
+            {currentUserRole === 'admin' && (
+              <div className="bg-neutral-900/60 p-4 rounded-3xl border border-neutral-900 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-5 h-5 text-sky-400" />
+                  <h2 className="text-sm font-bold text-neutral-200">伺服器連線網址 (Server URL)</h2>
+                </div>
+                <p className="text-xs text-neutral-400 leading-relaxed">
+                  若有架設 Nginx / Cloudflare 反向代理，或在手機 App (APK) 啟動時需要指定連線端點，可在此修改：
+                </p>
 
-              {isEditingServerUrl ? (
-                <div className="space-y-2 pt-1">
-                  <input 
-                    type="text" 
-                    value={tempServerUrl} 
-                    onChange={(e) => setTempServerUrl(e.target.value)}
-                    placeholder="https://music.example.com"
-                    className="w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-xs font-mono"
-                  />
-                  <div className="flex gap-2">
+                {isEditingServerUrl ? (
+                  <div className="space-y-2 pt-1">
+                    <input 
+                      type="text" 
+                      value={tempServerUrl} 
+                      onChange={(e) => setTempServerUrl(e.target.value)}
+                      placeholder="https://music.example.com"
+                      className="w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-xs font-mono"
+                    />
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => {
+                          setServerUrl(tempServerUrl.trim());
+                          localStorage.setItem('garmin_server_url', tempServerUrl.trim());
+                          setIsEditingServerUrl(false);
+                        }}
+                        className="px-3 py-1.5 bg-rose-600 text-white rounded-xl text-xs font-semibold"
+                      >
+                        儲存變更
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setTempServerUrl(serverUrl);
+                          setIsEditingServerUrl(false);
+                        }}
+                        className="px-3 py-1.5 text-neutral-400 text-xs"
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between p-3 rounded-2xl bg-neutral-950 border border-neutral-800">
+                    <span className="text-xs font-mono text-neutral-200 truncate mr-2">{serverUrl}</span>
                     <button 
-                      onClick={() => {
-                        setServerUrl(tempServerUrl.trim());
-                        localStorage.setItem('garmin_server_url', tempServerUrl.trim());
-                        setIsEditingServerUrl(false);
-                      }}
-                      className="px-3 py-1.5 bg-rose-600 text-white rounded-xl text-xs font-semibold"
+                      onClick={() => setIsEditingServerUrl(true)}
+                      className="text-xs text-rose-400 hover:underline shrink-0"
                     >
-                      儲存變更
-                    </button>
-                    <button 
-                      onClick={() => {
-                        setTempServerUrl(serverUrl);
-                        setIsEditingServerUrl(false);
-                      }}
-                      className="px-3 py-1.5 text-neutral-400 text-xs"
-                    >
-                      取消
+                      變更網址
                     </button>
                   </div>
-                </div>
-              ) : (
-                <div className="flex items-center justify-between p-3 rounded-2xl bg-neutral-950 border border-neutral-800">
-                  <span className="text-xs font-mono text-neutral-200 truncate mr-2">{serverUrl}</span>
-                  <button 
-                    onClick={() => setIsEditingServerUrl(true)}
-                    className="text-xs text-rose-400 hover:underline shrink-0"
-                  >
-                    變更網址
-                  </button>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
 
             {/* 5. Garmin 連線資訊摘要 */}
             <div className="bg-neutral-900/60 p-4 rounded-3xl border border-neutral-900 space-y-3">
