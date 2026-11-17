@@ -1179,7 +1179,7 @@ export default function App() {
                 <h2 className="text-sm font-bold text-neutral-200">YouTube 音訊下載</h2>
               </div>
               <p className="text-xs text-neutral-400 leading-relaxed">
-                貼上 YouTube 影片或播放清單網址，自動轉換為 320kbps MP3 並下載至指定資料夾。
+                貼上 YouTube 影片或播放清單網址，自動轉換為 192kbps MP3 並下載至指定資料夾。
               </p>
 
               <form onSubmit={handleSubmitDownload} className="space-y-3 pt-1">

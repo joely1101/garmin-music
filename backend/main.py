@@ -207,14 +207,14 @@ def verify_subsonic_auth(
 # ----------------- Audio Helpers -----------------
 def get_audio_metadata(file_path: Path):
     duration = 0
-    bitrate = 320
+    bitrate = 192
     title = file_path.stem
     artist = "Unknown Artist"
     album = "Unknown Album"
     try:
         audio = MP3(file_path, ID3=EasyID3)
         duration = int(audio.info.length)
-        bitrate = int(audio.info.bitrate / 1000) if audio.info.bitrate else 320
+        bitrate = int(audio.info.bitrate / 1000) if audio.info.bitrate else 192
         if "title" in audio and audio["title"]:
             title = str(audio["title"][0])
         if "artist" in audio and audio["artist"]:
@@ -881,14 +881,14 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
                 filename = Path(d.get('filename', '')).name
                 DOWNLOAD_TASKS[task_id]["progress"] = f"Downloading ({pct}): {filename[:30]}"
             elif d['status'] == 'finished':
-                DOWNLOAD_TASKS[task_id]["progress"] = "Converting audio to MP3 (320k)..."
+                DOWNLOAD_TASKS[task_id]["progress"] = "Converting audio to MP3 (192k)..."
 
         ydl_opts = {
             'format': 'bestaudio/best',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
-                'preferredquality': '320',
+                'preferredquality': '192',
             }],
             'outtmpl': str(target_dir / '%(title)s.%(ext)s'),
             'progress_hooks': [progress_hook],

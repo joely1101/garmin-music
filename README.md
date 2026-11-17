@@ -1,6 +1,6 @@
 # 🎵 Garmin Music Server & Mobile Web Suite
 
-一個專為 **Garmin 手錶（相容 Subsonic / Navidrome API）** 量身打造的現代化音樂串流、下載與管理伺服器。內建專為手機操作優化的極簡響應式 Web GUI，並支援一鍵下載 YouTube Music 與 Podcast RSS 轉為高品質 320k MP3 離線存入手錶。
+一個專為 **Garmin 手錶（相容 Subsonic / Navidrome API）** 量身打造的現代化音樂串流、下載與管理伺服器。內建專為手機操作優化的極簡響應式 Web GUI，並支援一鍵下載 YouTube Music 與 Podcast RSS 轉為手錶最佳化 192k MP3 離線存入手錶。
 
 ---
 
@@ -16,7 +16,7 @@
 3. **YouTube Music & Podcast 轉 MP3 下載器**：
    * 支援輸入 YouTube / YouTube Music 網址（可選擇下載整張合輯或僅當前單曲）。
    * 支援輸入 Podcast RSS 訂閱連結自動抓取最新單集音訊。
-   * 背景透過 `yt-dlp` 與 `ffmpeg` 自動轉碼為標準 320kbps MP3。
+   * 背景透過 `yt-dlp` 與 `ffmpeg` 自動轉碼為標準 192kbps MP3。
 4. **手機導向 (Mobile-First) 現代極簡 GUI**：
    * 底部導航欄與浮動音樂迷你播放器，手機瀏覽器體驗如原生 App。
    * 支援打包為原生 Android APK（透過 Capacitor）。
@@ -96,7 +96,7 @@ docker compose pull && docker compose up -d
    * **Server URL**：輸入您的伺服器網址（例如 `http://192.168.1.100:8090`，若有反向代理請填寫 `https://music.yourdomain.com`）。
    * **Username**：`admin`（或您自訂的使用者名稱）。
    * **Password**：`admin`（或您在網頁設定中修改的新密碼）。
-   * **Max Bitrate**：建議選擇 `320`（與後端轉碼品質相符）。
+   * **Max Bitrate**：建議選擇 `192`（或 `320`，與後端轉碼品質相符）。
    * **Legacy Authentication**：保持關閉（預設關閉即可支援標準 Token 認證）。
 4. 點擊 **儲存 (Save)**。
 
