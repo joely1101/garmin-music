@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, UploadFile, File, Form, Query, HTTPException, Request, BackgroundTasks, Header, Depends
-from fastapi.responses import JSONResponse, FileResponse, Response
+from fastapi.responses import JSONResponse, FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -438,14 +438,28 @@ def subsonic_stream(id: str = Query(...), user: str = Depends(verify_subsonic_au
             raise HTTPException(status_code=404, detail="File not found on disk")
         
         file_size = file_path.stat().st_size
-        print(f"[STREAM SUCCESS] File verified! Size={file_size} bytes ({round(file_size/1024/1024, 2)} MB). Serving to Garmin watch...")
+        print(f"[STREAM START] Serving '{track['title']}' ({file_size} bytes / {round(file_size/1024/1024, 2)} MB) to Garmin watch [{user}]...")
         
         headers = {
             "Content-Length": str(file_size),
             "Accept-Ranges": "bytes",
         }
-        return FileResponse(
-            path=file_path,
+
+        def file_iterator(path: Path, chunk_size: int = 65536):
+            bytes_sent = 0
+            try:
+                with open(path, "rb") as f:
+                    while chunk := f.read(chunk_size):
+                        bytes_sent += len(chunk)
+                        yield chunk
+                print(f"[STREAM FINISHED] Successfully streamed '{path.name}' to Garmin [{user}]. Sent {bytes_sent}/{file_size} bytes (100% complete).\n")
+            except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError) as e:
+                print(f"[STREAM ABORTED] Garmin [{user}] closed connection prematurely. Sent {bytes_sent}/{file_size} bytes ({round(bytes_sent/file_size*100, 1)}%). Reason: {type(e).__name__}\n")
+            except Exception as e:
+                print(f"[STREAM ERROR] Error while streaming '{path.name}' to Garmin [{user}]: {e}\n")
+
+        return StreamingResponse(
+            file_iterator(file_path),
             media_type="audio/mpeg",
             headers=headers
         )
