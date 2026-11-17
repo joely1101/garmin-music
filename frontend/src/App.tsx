@@ -29,7 +29,9 @@ import {
   Users,
   UserPlus,
   UserX,
-  AlertCircle
+  AlertCircle,
+  Copy,
+  Check
 } from 'lucide-react';
 
 interface Track {
@@ -138,6 +140,7 @@ export default function App() {
   const [serverUrl, setServerUrl] = useState<string>(() => localStorage.getItem('garmin_server_url') || window.location.origin);
   const [isEditingServerUrl, setIsEditingServerUrl] = useState(false);
   const [tempServerUrl, setTempServerUrl] = useState(serverUrl);
+  const [copiedUrl, setCopiedUrl] = useState(false);
 
   // Data State
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -1679,8 +1682,29 @@ export default function App() {
                 <Watch className="w-5 h-5 text-emerald-400" />
                 <h2 className="text-sm font-bold text-neutral-200">Garmin 手錶 App 連線摘要</h2>
               </div>
-              <div className="space-y-1.5 text-xs text-neutral-300">
-                <p>• <b>Server URL:</b> <span className="font-mono text-emerald-400">{serverUrl}</span></p>
+              <div className="space-y-2 text-xs text-neutral-300">
+                <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-neutral-950/80 border border-neutral-800">
+                  <div className="min-w-0 flex-1">
+                    <span className="text-[10px] text-neutral-500 uppercase font-semibold block">Server URL (手錶伺服器端點)</span>
+                    <span className="font-mono text-emerald-400 truncate block text-xs select-all">{serverUrl}</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(serverUrl);
+                      setCopiedUrl(true);
+                      setTimeout(() => setCopiedUrl(false), 2000);
+                    }}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition active:scale-95 ${
+                      copiedUrl 
+                        ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30' 
+                        : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white'
+                    }`}
+                    title="複製 Server URL"
+                  >
+                    {copiedUrl ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedUrl ? '已複製' : '複製'}</span>
+                  </button>
+                </div>
                 <p>• <b>Username:</b> <span className="font-mono text-emerald-400">{currentUser}</span></p>
                 <p>• <b>Password:</b> 您為此帳號設定的手錶密碼</p>
                 <p>• <b>隔離保護:</b> 手錶僅會同步您專屬曲庫中打勾的歌曲。</p>
