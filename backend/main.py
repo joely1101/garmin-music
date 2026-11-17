@@ -677,6 +677,32 @@ def create_folder(folder_name: str = Query(...), current_user: str = Depends(get
     target_dir.mkdir(parents=True, exist_ok=True)
     return {"status": "ok", "folder": clean_folder}
 
+@app.delete("/api/folders/{folder_name}")
+def delete_folder(folder_name: str, current_user: str = Depends(get_current_user_from_req)):
+    clean_folder = re.sub(r'[\\/*?:"<>|]', "", folder_name).strip()
+    if not clean_folder:
+        raise HTTPException(status_code=400, detail="Invalid folder name")
+    
+    with get_db() as conn:
+        # 查詢此使用者此目錄下的所有歌曲，準備清理磁碟與資料庫
+        rows = conn.execute("SELECT id, rel_path FROM tracks WHERE user = ? AND folder = ?", (current_user, clean_folder)).fetchall()
+        for r in rows:
+            file_path = MUSIC_DIR / r["rel_path"]
+            if file_path.exists():
+                try:
+                    file_path.unlink()
+                except Exception:
+                    pass
+        conn.execute("DELETE FROM tracks WHERE user = ? AND folder = ?", (current_user, clean_folder))
+        conn.commit()
+
+    # 刪除實體目錄及其內殘留檔案
+    target_dir = MUSIC_DIR / current_user / clean_folder
+    if target_dir.exists():
+        shutil.rmtree(target_dir, ignore_errors=True)
+
+    return {"status": "ok", "deleted_folder": clean_folder}
+
 @app.get("/api/tracks")
 def list_tracks(folder: Optional[str] = None, current_user: str = Depends(get_current_user_from_req)):
     with get_db() as conn:

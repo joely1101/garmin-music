@@ -620,6 +620,38 @@ export default function App() {
     }
   };
 
+  // Delete Folder Handler
+  const handleDeleteFolder = async (folderName: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const songCount = tracks.filter(t => t.folder === folderName).length;
+    const confirmMsg = songCount > 0 
+      ? `確定要刪除目錄「${folderName}」嗎？\n⚠️ 該目錄內的 ${songCount} 首歌曲將會一併被徹底刪除！`
+      : `確定要刪除空目錄「${folderName}」嗎？`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const res = await apiFetch(`/api/folders/${encodeURIComponent(folderName)}`, { method: 'DELETE' });
+      if (res.ok) {
+        // 如果當前正在播放該目錄的歌曲，停止播放
+        if (currentTrack && currentTrack.folder === folderName) {
+          audioRef.current?.pause();
+          setCurrentTrack(null);
+          setIsPlaying(false);
+        }
+        if (selectedFolder === folderName) {
+          setSelectedFolder(null);
+        }
+        fetchFolders();
+        fetchTracks();
+      } else {
+        alert('刪除目錄失敗');
+      }
+    } catch (err) {
+      alert('連線失敗');
+    }
+  };
+
   // Submit Downloader Job
   const handleSubmitDownload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -982,20 +1014,30 @@ export default function App() {
                       <div 
                         key={folder}
                         onClick={() => setSelectedFolder(folder)}
-                        className="flex items-center justify-between p-3.5 rounded-2xl bg-neutral-900/40 border border-neutral-900/80 hover:bg-neutral-900 cursor-pointer transition active:scale-98"
+                        className="group flex items-center justify-between p-3.5 rounded-2xl bg-neutral-900/40 border border-neutral-900/80 hover:bg-neutral-900 cursor-pointer transition active:scale-98"
                       >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-neutral-800/80 flex items-center justify-center text-rose-400">
+                        <div className="flex items-center gap-3 min-w-0 flex-1 mr-2">
+                          <div className="w-10 h-10 rounded-xl bg-neutral-800/80 flex items-center justify-center text-rose-400 shrink-0">
                             <Folder className="w-5 h-5" />
                           </div>
-                          <div>
-                            <p className="text-xs font-bold text-neutral-200">{folder}</p>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-bold text-neutral-200 truncate">{folder}</p>
                             <p className="text-[10px] text-neutral-400">
                               {count} 首歌 • {syncCount} 首同步到手錶
                             </p>
                           </div>
                         </div>
-                        <ChevronRight className="w-4 h-4 text-neutral-600" />
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            onClick={(e) => handleDeleteFolder(folder, e)}
+                            className="p-2 text-neutral-600 hover:text-rose-400 hover:bg-neutral-800/80 rounded-xl transition active:scale-90"
+                            title={`刪除目錄「${folder}」與其中全部歌曲`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                          <ChevronRight className="w-4 h-4 text-neutral-600" />
+                        </div>
                       </div>
                     );
                   })
@@ -1033,6 +1075,15 @@ export default function App() {
                         className="text-[11px] text-neutral-400 hover:text-white"
                       >
                         取消全選
+                      </button>
+                      <span className="text-neutral-700">|</span>
+                      <button 
+                        onClick={() => handleDeleteFolder(selectedFolder)}
+                        className="text-[11px] text-rose-500 hover:text-rose-400 flex items-center gap-0.5"
+                        title="刪除當前整個目錄與所有歌曲"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>刪除此目錄</span>
                       </button>
                     </div>
                   )}
