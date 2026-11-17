@@ -443,14 +443,11 @@ def subsonic_stream(id: str = Query(...), user: str = Depends(verify_subsonic_au
         headers = {
             "Content-Length": str(file_size),
             "Accept-Ranges": "bytes",
-            "Content-Type": "audio/mpeg",
-            "Content-Disposition": f'attachment; filename="{Path(track["rel_path"]).name}"'
         }
         return FileResponse(
             path=file_path,
             media_type="audio/mpeg",
-            headers=headers,
-            filename=Path(track["rel_path"]).name
+            headers=headers
         )
 
 @app.get("/api/tracks/{id}/stream")
