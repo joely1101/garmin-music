@@ -43,6 +43,38 @@ MUSIC_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "music.db" if (DATA_DIR / "music.db").exists() else (BASE_DIR / "music.db" if (BASE_DIR / "music.db").exists() else DATA_DIR / "music.db")
 
 # ----------------- Database Setup -----------------
+def migrate_legacy_admin_music():
+    """將舊版 MUSIC_DIR/admin 下的資料夾和歌曲移至 MUSIC_DIR 根層級，並更新資料庫 rel_path"""
+    admin_dir = MUSIC_DIR / "admin"
+    if admin_dir.exists() and admin_dir.is_dir():
+        try:
+            for item in list(admin_dir.iterdir()):
+                target = MUSIC_DIR / item.name
+                if not target.exists():
+                    shutil.move(str(item), str(target))
+                else:
+                    if item.is_dir():
+                        for sub_item in list(item.iterdir()):
+                            sub_target = target / sub_item.name
+                            if not sub_target.exists():
+                                shutil.move(str(sub_item), str(sub_target))
+            try:
+                # 若 admin 目錄空了則刪除
+                if not any(admin_dir.iterdir()):
+                    admin_dir.rmdir()
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[MIGRATION WARNING] Failed migrating admin directory: {e}")
+
+    # 資料庫更新 rel_path：將 'admin/...' 去除 'admin/'
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("UPDATE tracks SET rel_path = SUBSTR(rel_path, 7) WHERE rel_path LIKE 'admin/%'")
+            conn.commit()
+    except Exception:
+        pass
+
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -240,36 +272,33 @@ def get_audio_metadata(file_path: Path):
 
 def scan_and_sync_files():
     """
-    掃描 MUSIC_DIR 底下所有使用者的 MP3 檔案至資料庫。
-    結構：MUSIC_DIR / <user> / <folder> / <song.mp3>
+    掃描 MUSIC_DIR 底下的 MP3 檔案至資料庫。
+    結構：MUSIC_DIR / <folder> / <song.mp3> (去除了 admin 這層)
     """
+    migrate_legacy_admin_music()
     with get_db() as conn:
-        users = [r["username"] for r in conn.execute("SELECT username FROM users").fetchall()]
-        if not users:
-            users = ["admin"]
-
         existing_paths = {row["rel_path"]: (row["id"], row["user"]) for row in conn.execute("SELECT id, rel_path, user FROM tracks")}
         found_paths = set()
 
-        for user_name in users:
-            user_music_dir = MUSIC_DIR / user_name
-            user_music_dir.mkdir(parents=True, exist_ok=True)
+        for file in MUSIC_DIR.rglob("*.mp3"):
+            # 略過可能殘留的 admin 目錄
+            rel = file.relative_to(MUSIC_DIR).as_posix()
+            if rel.startswith("admin/"):
+                continue
 
-            for file in user_music_dir.rglob("*.mp3"):
-                rel = file.relative_to(MUSIC_DIR).as_posix()
-                found_paths.add(rel)
-                
-                # 計算 folder (相對於 user_music_dir)
-                folder_rel = file.parent.relative_to(user_music_dir).as_posix()
-                folder = "" if folder_rel == "." else folder_rel
+            found_paths.add(rel)
+            
+            # 計算 folder (相對於 MUSIC_DIR)
+            folder_rel = file.parent.relative_to(MUSIC_DIR).as_posix()
+            folder = "音樂" if folder_rel == "." else folder_rel
 
-                if rel not in existing_paths:
-                    meta = get_audio_metadata(file)
-                    track_id = str(uuid.uuid4())
-                    conn.execute("""
-                        INSERT INTO tracks (id, title, artist, album, duration, bitrate, size, rel_path, folder, sync_enabled, user)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-                    """, (track_id, meta["title"], meta["artist"], meta["album"], meta["duration"], meta["bitrate"], meta["size"], rel, folder, user_name))
+            if rel not in existing_paths:
+                meta = get_audio_metadata(file)
+                track_id = str(uuid.uuid4())
+                conn.execute("""
+                    INSERT INTO tracks (id, title, artist, album, duration, bitrate, size, rel_path, folder, sync_enabled, user)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'admin')
+                """, (track_id, meta["title"], meta["artist"], meta["album"], meta["duration"], meta["bitrate"], meta["size"], rel, folder))
 
         # Cleanup deleted files
         for rel, (tid, _) in existing_paths.items():
@@ -472,22 +501,8 @@ def subsonic_stream(id: str = Query(...), user: str = Depends(verify_subsonic_au
 
 @app.get("/api/tracks/{id}/stream")
 def web_stream_track(id: str, token: Optional[str] = Query(None), current_user: str = Depends(get_current_user_from_req)):
-    # 支援透過 query token 或 Bearer header 或本機預設 (get_current_user_from_req)
-    username = current_user
-    if token:
-        v_user = verify_web_token(token)
-        if v_user:
-            username = v_user
-
     with get_db() as conn:
-        # Admin 可以播放全部歌曲，一般用戶僅可播放自己的歌曲
-        user_row = conn.execute("SELECT role FROM users WHERE username = ?", (username,)).fetchone()
-        is_admin = user_row and user_row["role"] == "admin"
-        
-        if is_admin:
-            track = conn.execute("SELECT * FROM tracks WHERE id = ?", (id,)).fetchone()
-        else:
-            track = conn.execute("SELECT * FROM tracks WHERE id = ? AND user = ?", (id, username)).fetchone()
+        track = conn.execute("SELECT * FROM tracks WHERE id = ?", (id,)).fetchone()
 
         if not track:
             raise HTTPException(status_code=404, detail="Track not found")
@@ -713,23 +728,24 @@ def admin_delete_user(target_username: str, admin: str = Depends(require_admin))
 
     return {"status": "ok", "deleted": target_username}
 
-# ----------------- User Folders & Tracks API (完全隔離) -----------------
+# ----------------- User Folders & Tracks API -----------------
 @app.get("/api/folders")
 def list_folders(current_user: str = Depends(get_current_user_from_req)):
-    user_music_dir = MUSIC_DIR / current_user
-    user_music_dir.mkdir(parents=True, exist_ok=True)
     folders = []
-    for item in user_music_dir.iterdir():
-        if item.is_dir():
+    for item in MUSIC_DIR.iterdir():
+        if item.is_dir() and item.name not in ("admin", "data", "bin", "__pycache__"):
             folders.append(item.name)
-    return sorted(folders)
+    if "音樂" not in folders:
+        (MUSIC_DIR / "音樂").mkdir(parents=True, exist_ok=True)
+        folders.append("音樂")
+    return sorted(list(set(folders)))
 
 @app.post("/api/folders")
 def create_folder(folder_name: str = Query(...), current_user: str = Depends(get_current_user_from_req)):
     clean_folder = re.sub(r'[\\/*?:"<>|]', "", folder_name).strip()
-    if not clean_folder:
+    if not clean_folder or clean_folder in ("admin", "data", "bin"):
         raise HTTPException(status_code=400, detail="Invalid folder name")
-    target_dir = MUSIC_DIR / current_user / clean_folder
+    target_dir = MUSIC_DIR / clean_folder
     target_dir.mkdir(parents=True, exist_ok=True)
     return {"status": "ok", "folder": clean_folder}
 
@@ -740,8 +756,8 @@ def delete_folder(folder_name: str, current_user: str = Depends(get_current_user
         raise HTTPException(status_code=400, detail="Invalid folder name")
     
     with get_db() as conn:
-        # 查詢此使用者此目錄下的所有歌曲，準備清理磁碟與資料庫
-        rows = conn.execute("SELECT id, rel_path FROM tracks WHERE user = ? AND folder = ?", (current_user, clean_folder)).fetchall()
+        # 查詢此目錄下的所有歌曲，準備清理磁碟與資料庫
+        rows = conn.execute("SELECT id, rel_path FROM tracks WHERE folder = ?", (clean_folder,)).fetchall()
         for r in rows:
             file_path = MUSIC_DIR / r["rel_path"]
             if file_path.exists():
@@ -749,11 +765,11 @@ def delete_folder(folder_name: str, current_user: str = Depends(get_current_user
                     file_path.unlink()
                 except Exception:
                     pass
-        conn.execute("DELETE FROM tracks WHERE user = ? AND folder = ?", (current_user, clean_folder))
+        conn.execute("DELETE FROM tracks WHERE folder = ?", (clean_folder,))
         conn.commit()
 
     # 刪除實體目錄及其內殘留檔案
-    target_dir = MUSIC_DIR / current_user / clean_folder
+    target_dir = MUSIC_DIR / clean_folder
     if target_dir.exists():
         shutil.rmtree(target_dir, ignore_errors=True)
 
@@ -762,10 +778,10 @@ def delete_folder(folder_name: str, current_user: str = Depends(get_current_user
 @app.get("/api/tracks")
 def list_tracks(folder: Optional[str] = None, current_user: str = Depends(get_current_user_from_req)):
     with get_db() as conn:
-        if folder:
-            cur = conn.execute("SELECT * FROM tracks WHERE user = ? AND folder = ? ORDER BY title ASC", (current_user, folder))
+        if folder and folder != "ALL":
+            cur = conn.execute("SELECT * FROM tracks WHERE folder = ? ORDER BY title ASC", (folder,))
         else:
-            cur = conn.execute("SELECT * FROM tracks WHERE user = ? ORDER BY folder ASC, title ASC", (current_user,))
+            cur = conn.execute("SELECT * FROM tracks ORDER BY folder ASC, title ASC")
         return [dict(r) for r in cur.fetchall()]
 
 @app.post("/api/tracks/{track_id}/sync")
@@ -790,12 +806,6 @@ def delete_track(track_id: str, current_user: str = Depends(get_current_user_fro
         if not row:
             raise HTTPException(status_code=404, detail="Track not found")
         
-        # 僅允許刪除自己名下的歌曲 (除非是 admin)
-        user_row = conn.execute("SELECT role FROM users WHERE username = ?", (current_user,)).fetchone()
-        is_admin = user_row and user_row["role"] == "admin"
-        if row["user"] != current_user and not is_admin:
-            raise HTTPException(status_code=403, detail="無權刪除此曲目")
-        
         file_path = MUSIC_DIR / row["rel_path"]
         if file_path.exists():
             try:
@@ -814,15 +824,10 @@ class BatchDeleteTracksRequest(BaseModel):
 def batch_delete_tracks(req: BatchDeleteTracksRequest, current_user: str = Depends(get_current_user_from_req)):
     deleted_ids = []
     with get_db() as conn:
-        user_row = conn.execute("SELECT role FROM users WHERE username = ?", (current_user,)).fetchone()
-        is_admin = user_row and user_row["role"] == "admin"
-
         for tid in req.track_ids:
             cur = conn.execute("SELECT rel_path, user FROM tracks WHERE id = ?", (tid,))
             row = cur.fetchone()
             if not row:
-                continue
-            if row["user"] != current_user and not is_admin:
                 continue
             
             file_path = MUSIC_DIR / row["rel_path"]
@@ -851,7 +856,7 @@ async def upload_mp3(folder: str = Form("音樂"), file: UploadFile = File(...),
     if not clean_folder:
         clean_folder = "音樂"
         
-    target_folder = MUSIC_DIR / current_user / clean_folder
+    target_folder = MUSIC_DIR / clean_folder
     target_folder.mkdir(parents=True, exist_ok=True)
     
     clean_name = re.sub(r'[\\/*?:"<>|]', "", file.filename)
@@ -872,11 +877,11 @@ async def upload_mp3(folder: str = Form("音樂"), file: UploadFile = File(...),
     with get_db() as conn:
         conn.execute("""
             INSERT INTO tracks (id, title, artist, album, duration, bitrate, size, rel_path, folder, sync_enabled, user)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-        """, (track_id, meta["title"], meta["artist"], meta["album"], meta["duration"], meta["bitrate"], meta["size"], rel_path, clean_folder, current_user))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'admin')
+        """, (track_id, meta["title"], meta["artist"], meta["album"], meta["duration"], meta["bitrate"], meta["size"], rel_path, clean_folder))
         conn.commit()
         
-    return {"status": "success", "track": {"id": track_id, **meta, "rel_path": rel_path, "folder": clean_folder, "user": current_user}}
+    return {"status": "success", "track": {"id": track_id, **meta, "rel_path": rel_path, "folder": clean_folder, "user": "admin"}}
 
 # ----------------- Downloader & Podcast Exploration -----------------
 class DownloadRequest(BaseModel):
@@ -896,7 +901,10 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
     display_title = custom_title or url
     DOWNLOAD_TASKS[task_id] = {"status": "processing", "progress": "Starting...", "title": display_title, "url": url, "user": current_user, "error": None}
     
-    target_dir = MUSIC_DIR / current_user / target_folder
+    clean_target = re.sub(r'[\\/*?:"<>|]', "", target_folder).strip() if target_folder else "音樂"
+    if not clean_target:
+        clean_target = "音樂"
+    target_dir = MUSIC_DIR / clean_target
     target_dir.mkdir(parents=True, exist_ok=True)
     
     try:
@@ -1310,7 +1318,7 @@ def sync_tracks_to_watch(req: WatchSyncRequest, current_user: str = Depends(get_
     
     with get_db() as conn:
         placeholders = ",".join("?" * len(req.track_ids))
-        cur = conn.execute(f"SELECT * FROM tracks WHERE id IN ({placeholders}) AND user = ?", (*req.track_ids, current_user))
+        cur = conn.execute(f"SELECT * FROM tracks WHERE id IN ({placeholders})", (*req.track_ids,))
         tracks = cur.fetchall()
 
     if not tracks:
@@ -1423,6 +1431,53 @@ def delete_tracks_from_watch(req: WatchDeleteRequest, current_user: str = Depend
                     f.writelines(lines)
 
     return {"status": "ok", "deleted_count": len(deleted), "deleted": deleted}
+
+class CreateWatchPlaylistRequest(BaseModel):
+    name: str
+    rel_paths: List[str]
+    watch_path: Optional[str] = None
+
+@app.post("/api/watch/playlists")
+def create_watch_playlist(req: CreateWatchPlaylistRequest, current_user: str = Depends(get_current_user_from_req)):
+    """在手錶建立自訂播放清單 (.m3u8)"""
+    clean_name = re.sub(r'[\\/*?:"<>|]', "", req.name).strip()
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="清單名稱無效")
+
+    if not req.rel_paths:
+        raise HTTPException(status_code=400, detail="未選取任何歌曲")
+
+    target_str = req.watch_path
+    if not target_str:
+        with get_db() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = 'watch_mount_path'").fetchone()
+            if row and row["value"]:
+                target_str = row["value"]
+        if not target_str:
+            drives = detect_garmin_watch_drives()
+            if drives:
+                target_str = drives[0]["path"]
+
+    if not target_str or not Path(target_str).exists():
+        raise HTTPException(status_code=400, detail="未找到 Garmin 手錶音樂磁碟")
+
+    watch_dir = Path(target_str)
+    m3u8_file = watch_dir / f"{clean_name}.m3u8"
+
+    lines = ["#EXTM3U\n"]
+    for rel in req.rel_paths:
+        clean_rel = rel.replace("\\", "/")
+        stem = Path(clean_rel).stem
+        lines.append(f"#EXTINF:-1,{stem}\n")
+        lines.append(f"{clean_rel}\n")
+
+    try:
+        with open(m3u8_file, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"寫入手錶清單失敗: {str(e)}")
+
+    return {"status": "ok", "playlist_name": clean_name}
 
 # ----------------- Serve Frontend Static Files -----------------
 if FRONTEND_DIST.exists():

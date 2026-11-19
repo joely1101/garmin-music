@@ -19,7 +19,8 @@ import {
   X,
   ChevronDown,
   ChevronRight,
-  Folder
+  Folder,
+  ListMusic
 } from 'lucide-react';
 
 interface LocalTrack {
@@ -148,6 +149,11 @@ export default function App() {
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
 
+  // Watch Custom Playlist Modal
+  const [showPlaylistModal, setShowPlaylistModal] = useState(false);
+  const [customPlaylistName, setCustomPlaylistName] = useState('');
+  const [creatingPlaylist, setCreatingPlaylist] = useState(false);
+
   // Custom Path Input
   const [customPathInput, setCustomPathInput] = useState('');
 
@@ -268,6 +274,17 @@ export default function App() {
         setDownloadTasks(data);
         const hasProcessing = Object.values(data).some((t: any) => t.status === 'processing' || t.status === 'queued');
         setIsDownloading(hasProcessing);
+
+        // 自動清除已完成或失敗單集的下載中狀態
+        setDownloadingEpUrls(prev => {
+          if (prev.length === 0) return prev;
+          const remaining = prev.filter(epUrl => {
+            const task = (Object.values(data) as any[]).find((t: any) => t.url === epUrl);
+            if (!task) return true; // 尚未建立任務
+            return task.status === 'processing' || task.status === 'queued';
+          });
+          return remaining.length === prev.length ? prev : remaining;
+        });
       }
     } catch (e) {
       console.error(e);
@@ -400,7 +417,42 @@ export default function App() {
     }
   };
 
-  // ---------------- Refresh All ----------------
+  const handleCreateWatchPlaylist = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = customPlaylistName.trim();
+    if (!trimmed) return;
+    if (selectedWatchTracks.length === 0) {
+      alert('請先在手錶列表中勾選歌曲');
+      return;
+    }
+
+    setCreatingPlaylist(true);
+    try {
+      const res = await fetch('/api/watch/playlists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: trimmed,
+          rel_paths: selectedWatchTracks,
+          watch_path: watchStatus.active_watch?.path
+        })
+      });
+      if (res.ok) {
+        setCustomPlaylistName('');
+        setShowPlaylistModal(false);
+        setSyncMessage(`✅ 成功建立手錶播放清單：${trimmed}.m3u8（含 ${selectedWatchTracks.length} 首歌曲）`);
+        await fetchWatchTracks();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || '建立播放清單失敗');
+      }
+    } catch (e: any) {
+      alert(`連線失敗: ${e.message}`);
+    } finally {
+      setCreatingPlaylist(false);
+      setTimeout(() => setSyncMessage(null), 5000);
+    }
+  };
   const handleRefreshLocal = async () => {
     setLoadingLocal(true);
     try {
@@ -564,7 +616,7 @@ export default function App() {
               }`}
             >
               <HardDrive className="w-4 h-4" />
-              <span>雙欄同步管理</span>
+              <span>手錶同步管理</span>
             </button>
 
             <button
@@ -588,7 +640,7 @@ export default function App() {
               }`}
             >
               <Mic className="w-4 h-4" />
-              <span>Podcast 節目訂閱</span>
+              <span>Podcast 下載</span>
             </button>
 
             <button
@@ -608,13 +660,23 @@ export default function App() {
           <div className="px-5 pt-4 pb-2">
             <div className="flex items-center justify-between text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">
               <span>電腦分類目錄</span>
-              <button 
-                onClick={() => setShowFolderModal(true)}
-                className="hover:text-orange-400 flex items-center gap-1 transition"
-                title="新增目錄"
-              >
-                <FolderPlus className="w-3.5 h-3.5" />
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button 
+                  onClick={handleRefreshLocal}
+                  disabled={loadingLocal}
+                  className="hover:text-orange-400 flex items-center transition p-0.5"
+                  title="重新整理電腦音樂庫"
+                >
+                  <RotateCw className={`w-3.5 h-3.5 ${loadingLocal ? 'animate-spin text-orange-400' : ''}`} />
+                </button>
+                <button 
+                  onClick={() => setShowFolderModal(true)}
+                  className="hover:text-orange-400 flex items-center transition p-0.5"
+                  title="新增目錄"
+                >
+                  <FolderPlus className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
             <div className="space-y-0.5 max-h-48 overflow-y-auto pr-1">
               <button
@@ -697,7 +759,7 @@ export default function App() {
         <header className="h-16 border-b border-neutral-800 px-6 flex items-center justify-between shrink-0 bg-neutral-950/80 backdrop-blur">
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-bold text-white tracking-wide">
-              {activeTab === 'manager' && '雙欄音樂傳輸管理 (PC ⇄ Garmin)'}
+              {activeTab === 'manager' && '手錶音樂同步管理 (Garmin Music)'}
               {activeTab === 'download_yt' && 'YouTube 音訊下載至本地電腦'}
               {activeTab === 'download_podcast' && 'Podcast 單集瀏覽與下載'}
               {activeTab === 'settings' && '手錶儲存路徑與進階設定'}
@@ -1100,9 +1162,22 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* 手錶多選批量刪除按鍵 */}
+                  {/* 手錶多選批量操作按鍵 */}
                   {selectedWatchTracks.length > 0 && (
                     <div className="flex items-center gap-2 animate-fadeIn">
+                      <button
+                        disabled={!watchStatus.connected}
+                        onClick={() => {
+                          setCustomPlaylistName('');
+                          setShowPlaylistModal(true);
+                        }}
+                        className="px-2.5 py-1 bg-orange-600 hover:bg-orange-500 text-white rounded text-xs font-medium flex items-center gap-1.5 transition shadow-sm"
+                        title="將選取的歌曲建立成手錶播放清單 (.m3u8)"
+                      >
+                        <ListMusic className="w-3.5 h-3.5" />
+                        <span>建立播放清單 ({selectedWatchTracks.length})</span>
+                      </button>
+
                       <button
                         disabled={deletingFromWatch || !watchStatus.connected}
                         onClick={() => handleDeleteSpecificWatchTracks(selectedWatchTracks)}
@@ -1370,28 +1445,45 @@ export default function App() {
 
           {/* TAB 3: Podcast 下載 */}
           {activeTab === 'download_podcast' && (
-            <div className="h-full flex flex-col gap-5 max-w-5xl mx-auto">
-              {/* 搜尋列 */}
-              <form onSubmit={handlePodcastSearch} className="flex gap-3">
-                <div className="relative flex-1">
-                  <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-neutral-400" />
-                  <input
-                    type="text"
-                    placeholder="搜尋 Podcast 節目名稱（例如：股癌、百靈果、科技島讀...）"
-                    value={podcastQuery}
-                    onChange={(e) => setPodcastQuery(e.target.value)}
-                    className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-neutral-100 focus:outline-none focus:border-orange-500"
-                  />
+            <div className="h-full flex flex-col gap-4 max-w-5xl mx-auto">
+              {/* 搜尋列與目標下載目錄選擇 */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                <form onSubmit={handlePodcastSearch} className="flex gap-2 flex-1">
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-neutral-400" />
+                    <input
+                      type="text"
+                      placeholder="搜尋 Podcast 節目名稱（例如：股癌、百靈果、科技島讀...）"
+                      value={podcastQuery}
+                      onChange={(e) => setPodcastQuery(e.target.value)}
+                      className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-neutral-100 focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={searchingPodcast || !podcastQuery.trim()}
+                    className="px-5 py-2.5 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white rounded-xl text-sm font-medium transition flex items-center gap-2 shrink-0"
+                  >
+                    {searchingPodcast ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                    <span>搜尋</span>
+                  </button>
+                </form>
+
+                {/* 下載目錄選擇 */}
+                <div className="flex items-center gap-2 bg-neutral-900 border border-neutral-800 px-3.5 py-2 rounded-xl shrink-0">
+                  <Folder className="w-4 h-4 text-orange-400 shrink-0" />
+                  <span className="text-xs text-neutral-400 whitespace-nowrap">儲存目錄:</span>
+                  <select
+                    value={downloadFolder}
+                    onChange={(e) => setDownloadFolder(e.target.value)}
+                    className="bg-neutral-950 border border-neutral-800 text-neutral-200 text-xs rounded-lg px-2.5 py-1 focus:outline-none focus:border-orange-500"
+                  >
+                    {folders.map(f => (
+                      <option key={f} value={f}>{f}</option>
+                    ))}
+                  </select>
                 </div>
-                <button
-                  type="submit"
-                  disabled={searchingPodcast || !podcastQuery.trim()}
-                  className="px-6 py-2.5 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white rounded-xl text-sm font-medium transition flex items-center gap-2"
-                >
-                  {searchingPodcast ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                  <span>搜尋</span>
-                </button>
-              </form>
+              </div>
 
               {/* Podcast 內容雙欄：左頻道、右單集 */}
               <div className="flex-1 grid grid-cols-3 gap-5 overflow-hidden">
@@ -1538,6 +1630,58 @@ export default function App() {
 
         </div>
       </main>
+
+      {/* 建立手錶自訂播放清單彈窗 */}
+      {showPlaylistModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-5 max-w-sm w-full space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <ListMusic className="w-4 h-4 text-orange-400" />
+                <span>建立手錶播放清單 (.m3u8)</span>
+              </h3>
+              <button onClick={() => setShowPlaylistModal(false)} className="text-neutral-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleCreateWatchPlaylist} className="space-y-4">
+              <div>
+                <label className="block text-xs text-neutral-400 mb-1.5">
+                  播放清單名稱（手錶選單將顯示此名稱）
+                </label>
+                <input
+                  type="text"
+                  placeholder="例如：馬拉松配速清單、每日精選..."
+                  value={customPlaylistName}
+                  onChange={(e) => setCustomPlaylistName(e.target.value)}
+                  autoFocus
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3.5 py-2 text-sm text-neutral-100 focus:outline-none focus:border-orange-500"
+                />
+                <p className="text-[11px] text-neutral-500 mt-1.5">
+                  已選取手錶內的 {selectedWatchTracks.length} 首歌曲加入此播放清單。
+                </p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPlaylistModal(false)}
+                  className="px-4 py-1.5 bg-neutral-800 text-neutral-300 rounded-lg text-xs"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={!customPlaylistName.trim() || creatingPlaylist}
+                  className="px-4 py-1.5 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium flex items-center gap-1.5"
+                >
+                  {creatingPlaylist && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>建立清單</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* 新增目錄彈窗 */}
       {showFolderModal && (
