@@ -23,7 +23,10 @@ import {
   FolderOpen,
   FileMusic,
   ListMusic,
-  Edit2
+  Edit2,
+  SkipBack,
+  SkipForward,
+  FastForward
 } from 'lucide-react';
 
 interface LocalTrack {
@@ -126,6 +129,9 @@ export default function App() {
   // Player State
   const [playingTrackId, setPlayingTrackId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState<number>(1);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Download State
@@ -190,28 +196,114 @@ export default function App() {
   useEffect(() => {
     if (!audioRef.current) {
       audioRef.current = new Audio();
-      audioRef.current.onended = () => {
-        setIsPlaying(false);
-        setPlayingTrackId(null);
-      };
-      audioRef.current.onerror = () => {
-        setIsPlaying(false);
-        setPlayingTrackId(null);
-      };
     }
-  }, []);
+    const audio = audioRef.current;
+
+    const handleTimeUpdate = () => {
+      setCurrentTime(audio.currentTime);
+    };
+    const handleLoadedMetadata = () => {
+      setDuration(audio.duration || 0);
+    };
+    const handleEnded = () => {
+      setIsPlaying(false);
+      setCurrentTime(0);
+      handlePlayNext();
+    };
+    const handleError = () => {
+      setIsPlaying(false);
+      setPlayingTrackId(null);
+    };
+
+    audio.addEventListener('timeupdate', handleTimeUpdate);
+    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+    audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('error', handleError);
+
+    return () => {
+      audio.removeEventListener('timeupdate', handleTimeUpdate);
+      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('error', handleError);
+    };
+  }, [localTracks, playingTrackId]);
 
   const handlePlayAudio = (trackId: string) => {
     if (!audioRef.current) return;
     if (playingTrackId === trackId && isPlaying) {
       audioRef.current.pause();
       setIsPlaying(false);
+    } else if (playingTrackId === trackId && !isPlaying) {
+      audioRef.current.play();
+      setIsPlaying(true);
     } else {
       audioRef.current.src = `/api/tracks/${trackId}/stream`;
-      audioRef.current.play();
+      audioRef.current.playbackRate = playbackRate;
+      audioRef.current.play().catch(console.error);
       setPlayingTrackId(trackId);
       setIsPlaying(true);
     }
+  };
+
+  const handleTogglePlayPause = () => {
+    if (!audioRef.current || !playingTrackId) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioRef.current.play().catch(console.error);
+      setIsPlaying(true);
+    }
+  };
+
+  const handlePlayPrev = () => {
+    if (!playingTrackId || filteredLocalTracks.length === 0) return;
+    const currentIndex = filteredLocalTracks.findIndex(t => t.id === playingTrackId);
+    const prevIndex = currentIndex > 0 ? currentIndex - 1 : filteredLocalTracks.length - 1;
+    const prevTrack = filteredLocalTracks[prevIndex];
+    if (prevTrack) {
+      handlePlayAudio(prevTrack.id);
+    }
+  };
+
+  const handlePlayNext = () => {
+    if (!playingTrackId || filteredLocalTracks.length === 0) return;
+    const currentIndex = filteredLocalTracks.findIndex(t => t.id === playingTrackId);
+    const nextIndex = (currentIndex + 1) % filteredLocalTracks.length;
+    const nextTrack = filteredLocalTracks[nextIndex];
+    if (nextTrack) {
+      handlePlayAudio(nextTrack.id);
+    }
+  };
+
+  const handleSeek = (newTime: number) => {
+    if (!audioRef.current) return;
+    audioRef.current.currentTime = newTime;
+    setCurrentTime(newTime);
+  };
+
+  const handleForward10 = () => {
+    if (!audioRef.current) return;
+    const target = Math.min(audioRef.current.duration || 0, audioRef.current.currentTime + 10);
+    audioRef.current.currentTime = target;
+    setCurrentTime(target);
+  };
+
+  const handleCycleSpeed = () => {
+    const speeds = [1, 1.2, 1.5];
+    const nextIdx = (speeds.indexOf(playbackRate) + 1) % speeds.length;
+    const nextSpeed = speeds[nextIdx];
+    setPlaybackRate(nextSpeed);
+    if (audioRef.current) {
+      audioRef.current.playbackRate = nextSpeed;
+    }
+  };
+
+  const formatTime = (secs: number) => {
+    if (isNaN(secs) || secs < 0) return '0:00';
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
   // ---------------- API Calls ----------------
@@ -812,6 +904,97 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {/* 播放器資訊小卡 (歌曲播放中或已選曲時顯示於左下角) */}
+        {playingTrackId && (() => {
+          const activeTrack = localTracks.find(t => t.id === playingTrackId);
+          if (!activeTrack) return null;
+
+          return (
+            <div className="p-3.5 border-t border-neutral-800 bg-neutral-900/90 backdrop-blur space-y-2.5 animate-fadeIn">
+              {/* 曲目資訊 */}
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-orange-600/20 border border-orange-500/30 flex items-center justify-center shrink-0">
+                  <Music2 className={`w-4 h-4 text-orange-400 ${isPlaying ? 'animate-pulse' : ''}`} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-white truncate" title={activeTrack.title}>
+                    {activeTrack.title}
+                  </p>
+                  <p className="text-[10px] text-neutral-400 truncate">
+                    {activeTrack.artist || 'Unknown Artist'}
+                  </p>
+                </div>
+              </div>
+
+              {/* 時間滑桿 (進度條) */}
+              <div className="space-y-1">
+                <input
+                  type="range"
+                  min="0"
+                  max={duration || 100}
+                  step="0.5"
+                  value={currentTime}
+                  onChange={(e) => handleSeek(parseFloat(e.target.value))}
+                  className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-orange-500"
+                />
+                <div className="flex justify-between text-[10px] text-neutral-500 font-mono">
+                  <span>{formatTime(currentTime)}</span>
+                  <span>{formatTime(duration)}</span>
+                </div>
+              </div>
+
+              {/* 5 個操作控制按鍵 */}
+              <div className="flex items-center justify-between pt-0.5">
+                {/* 1. 前一首 */}
+                <button
+                  onClick={handlePlayPrev}
+                  className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition"
+                  title="上一首"
+                >
+                  <SkipBack className="w-4 h-4" />
+                </button>
+
+                {/* 2. 暫停 / 播放 */}
+                <button
+                  onClick={handleTogglePlayPause}
+                  className="w-8 h-8 rounded-full bg-orange-600 hover:bg-orange-500 text-white flex items-center justify-center shadow-md shadow-orange-950/40 transition"
+                  title={isPlaying ? "暫停" : "播放"}
+                >
+                  {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                </button>
+
+                {/* 3. 下一首 */}
+                <button
+                  onClick={handlePlayNext}
+                  className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition"
+                  title="下一首"
+                >
+                  <SkipForward className="w-4 h-4" />
+                </button>
+
+                {/* 4. 前進 10 秒 */}
+                <button
+                  onClick={handleForward10}
+                  className="px-1.5 py-1 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition flex items-center gap-0.5"
+                  title="快轉 10 秒"
+                >
+                  <FastForward className="w-3.5 h-3.5" />
+                  <span className="text-[10px] font-mono">+10s</span>
+                </button>
+
+                {/* 5. 循環倍速 (1x, 1.2x, 1.5x) */}
+                <button
+                  onClick={handleCycleSpeed}
+                  className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-orange-400 hover:text-orange-300 font-mono text-[11px] font-bold border border-neutral-700 transition"
+                  title="切換播放速度 (1x / 1.2x / 1.5x)"
+                >
+                  {playbackRate}x
+                </button>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* 手錶硬碟快速狀態小卡 */}
         <div className="p-4 border-t border-neutral-800 bg-neutral-900/50">
