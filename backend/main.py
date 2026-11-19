@@ -75,17 +75,17 @@ def verify_web_token(token: Optional[str]) -> Optional[str]:
         return None
 
 def get_current_user_from_req(authorization: Optional[str] = Header(None), token: Optional[str] = Query(None)) -> str:
-    """依據 Authorization: Bearer <token> 或 ?token=... 取得當前使用者"""
+    """Windows 本地桌面版預設單機使用者為 'admin'，若有傳 token 則依 token 驗證"""
     raw_token = token
     if authorization and authorization.startswith("Bearer "):
         raw_token = authorization[7:].strip()
     
-    if not raw_token:
-        raise HTTPException(status_code=401, detail="Missing authentication token")
-    username = verify_web_token(raw_token)
-    if not username:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    return username
+    if raw_token:
+        username = verify_web_token(raw_token)
+        if username:
+            return username
+    # 本地單機模式預設直接使用 admin
+    return "admin"
 
 def require_admin(current_user: str = Depends(get_current_user_from_req)) -> str:
     """確認當前使用者具備 admin 權限"""
@@ -1057,6 +1057,327 @@ def get_podcast_episodes(feed_url: str = Query(...)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse podcast episodes: {str(e)}")
+
+# ----------------- Windows Watch Drive & USB Sync API -----------------
+class WatchDriveConfig(BaseModel):
+    path: str
+
+class WatchSyncRequest(BaseModel):
+    track_ids: List[str]
+    watch_path: Optional[str] = None
+
+class WatchDeleteRequest(BaseModel):
+    rel_paths: List[str]
+    watch_path: Optional[str] = None
+
+def detect_garmin_watch_drives() -> List[Dict[str, Any]]:
+    """掃描 Windows 磁碟機代號，偵測 Garmin 手錶的 Music 目錄"""
+    import string
+    candidates = []
+    
+    # 支援設定檔自訂優先
+    custom_path = None
+    with get_db() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = 'watch_mount_path'").fetchone()
+        if row and row["value"]:
+            custom_path = Path(row["value"])
+            if custom_path.exists():
+                try:
+                    t, u, f = shutil.disk_usage(str(custom_path))
+                    candidates.append({
+                        "path": str(custom_path.resolve()),
+                        "drive": custom_path.drive,
+                        "label": f"自訂路徑 ({custom_path})",
+                        "total_bytes": t,
+                        "free_bytes": f,
+                        "used_bytes": u,
+                        "is_custom": True
+                    })
+                except Exception:
+                    pass
+
+    for letter in string.ascii_uppercase:
+        drive_str = f"{letter}:\\"
+        drive_path = Path(drive_str)
+        if not drive_path.exists():
+            continue
+            
+        try:
+            total, used, free = shutil.disk_usage(drive_str)
+            # 尋找標準 Garmin 目錄
+            possible_dirs = [
+                drive_path / "GARMIN" / "Music",
+                drive_path / "Garmin" / "Music",
+                drive_path / "GARMIN" / "music",
+                drive_path / "Music"
+            ]
+            
+            for p in possible_dirs:
+                if p.exists() and p.is_dir():
+                    # 避免重複加入
+                    if not any(c["path"] == str(p.resolve()) for c in candidates):
+                        is_garmin = "GARMIN" in str(p).upper()
+                        label = f"Garmin 手錶 ({letter}:)" if is_garmin else f"抽取式磁碟 ({letter}:\\Music)"
+                        candidates.append({
+                            "path": str(p.resolve()),
+                            "drive": f"{letter}:",
+                            "label": label,
+                            "total_bytes": total,
+                            "free_bytes": free,
+                            "used_bytes": used,
+                            "is_custom": False
+                        })
+        except Exception:
+            continue
+            
+    return candidates
+
+@app.get("/api/watch/status")
+def get_watch_status(current_user: str = Depends(get_current_user_from_req)):
+    """取得當前已連線手錶狀態、空間與所有偵測到的候選路徑"""
+    drives = detect_garmin_watch_drives()
+    active_path = None
+    if drives:
+        active_path = drives[0]["path"]
+    
+    with get_db() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = 'watch_mount_path'").fetchone()
+        if row and row["value"] and Path(row["value"]).exists():
+            active_path = row["value"]
+            
+    active_info = None
+    if active_path and Path(active_path).exists():
+        try:
+            t, u, f = shutil.disk_usage(active_path)
+            active_info = {
+                "path": str(Path(active_path).resolve()),
+                "total_bytes": t,
+                "free_bytes": f,
+                "used_bytes": u,
+                "free_gb": round(f / (1024**3), 2),
+                "total_gb": round(t / (1024**3), 2),
+                "used_percent": round((u / t) * 100, 1) if t > 0 else 0
+            }
+        except Exception:
+            pass
+
+    return {
+        "connected": active_info is not None,
+        "active_watch": active_info,
+        "detected_drives": drives
+    }
+
+@app.post("/api/watch/config")
+def set_watch_config(cfg: WatchDriveConfig, current_user: str = Depends(get_current_user_from_req)):
+    """手動設定手錶音樂資料夾路徑"""
+    p = Path(cfg.path.strip())
+    if not p.exists():
+        raise HTTPException(status_code=400, detail="指定的資料夾不存在")
+    with get_db() as conn:
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('watch_mount_path', ?)", (str(p.resolve()),))
+        conn.commit()
+    return {"status": "ok", "path": str(p.resolve())}
+
+@app.get("/api/watch/tracks")
+def get_watch_tracks(watch_path: Optional[str] = None, current_user: str = Depends(get_current_user_from_req)):
+    """掃描手錶內的 MP3 歌曲與播放清單"""
+    target_str = watch_path
+    if not target_str:
+        with get_db() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = 'watch_mount_path'").fetchone()
+            if row and row["value"]:
+                target_str = row["value"]
+        if not target_str:
+            drives = detect_garmin_watch_drives()
+            if drives:
+                target_str = drives[0]["path"]
+                
+    if not target_str or not Path(target_str).exists():
+        return {"connected": False, "tracks": [], "playlists": []}
+
+    target_dir = Path(target_str)
+    watch_tracks = []
+    playlists = []
+    
+    # 掃描 M3U8/M3U
+    for pl_file in target_dir.glob("*.m3u*"):
+        playlists.append(pl_file.stem)
+
+    # 遞迴掃描 MP3 檔案
+    for mp3_file in target_dir.rglob("*.mp3"):
+        try:
+            rel = mp3_file.relative_to(target_dir)
+            folder_name = rel.parent.name if rel.parent != Path(".") else "根目錄"
+            stat = mp3_file.stat()
+            
+            # 讀取 ID3
+            title = mp3_file.stem
+            artist = "Unknown Artist"
+            duration = 0
+            try:
+                audio = MP3(str(mp3_file), ID3=EasyID3)
+                duration = int(audio.info.length)
+                if audio.tags:
+                    title = audio.tags.get("title", [title])[0]
+                    artist = audio.tags.get("artist", [artist])[0]
+            except Exception:
+                pass
+                
+            watch_tracks.append({
+                "filename": mp3_file.name,
+                "title": title,
+                "artist": artist,
+                "duration": duration,
+                "size": stat.st_size,
+                "folder": folder_name,
+                "rel_path": str(rel).replace("\\", "/"),
+                "full_path": str(mp3_file.resolve()),
+                "mtime": stat.st_mtime
+            })
+        except Exception:
+            continue
+
+    return {
+        "connected": True,
+        "watch_path": str(target_dir.resolve()),
+        "playlists": sorted(list(set(playlists))),
+        "tracks": sorted(watch_tracks, key=lambda x: (x["folder"], x["title"]))
+    }
+
+@app.post("/api/watch/sync")
+def sync_tracks_to_watch(req: WatchSyncRequest, current_user: str = Depends(get_current_user_from_req)):
+    """將選取的電腦端歌曲複製到手錶磁碟，並更新 M3U8 播放清單"""
+    target_str = req.watch_path
+    if not target_str:
+        with get_db() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = 'watch_mount_path'").fetchone()
+            if row and row["value"]:
+                target_str = row["value"]
+        if not target_str:
+            drives = detect_garmin_watch_drives()
+            if drives:
+                target_str = drives[0]["path"]
+
+    if not target_str or not Path(target_str).exists():
+        raise HTTPException(status_code=400, detail="未找到 Garmin 手錶音樂磁碟，請確認手錶已以 USB 連線")
+
+    watch_dir = Path(target_str)
+    
+    with get_db() as conn:
+        placeholders = ",".join("?" * len(req.track_ids))
+        cur = conn.execute(f"SELECT * FROM tracks WHERE id IN ({placeholders}) AND user = ?", (*req.track_ids, current_user))
+        tracks = cur.fetchall()
+
+    if not tracks:
+        raise HTTPException(status_code=400, detail="未選取任何有效歌曲")
+
+    copied = []
+    skipped = []
+    failed = []
+    folders_affected = set()
+
+    for t in tracks:
+        src_file = MUSIC_DIR / t["rel_path"]
+        if not src_file.exists():
+            failed.append({"title": t["title"], "reason": "電腦上原始檔案遺失"})
+            continue
+            
+        folder_name = t["folder"] if t["folder"] else "音樂"
+        folders_affected.add(folder_name)
+        dest_folder = watch_dir / folder_name
+        dest_folder.mkdir(parents=True, exist_ok=True)
+        dest_file = dest_folder / src_file.name
+
+        # 檢查是否已存在相同大小的檔案
+        if dest_file.exists() and dest_file.stat().st_size == src_file.stat().st_size:
+            skipped.append(t["title"])
+            continue
+
+        try:
+            shutil.copy2(src_file, dest_file)
+            copied.append(t["title"])
+        except Exception as e:
+            failed.append({"title": t["title"], "reason": str(e)})
+
+    # 為受影響的目錄重新生成 M3U8 播放清單
+    for folder_name in folders_affected:
+        folder_path = watch_dir / folder_name
+        m3u8_file = watch_dir / f"{folder_name}.m3u8"
+        if folder_path.exists():
+            mp3s = sorted(folder_path.glob("*.mp3"))
+            if mp3s:
+                lines = ["#EXTM3U\n"]
+                for mp3 in mp3s:
+                    lines.append(f"#EXTINF:-1,{mp3.stem}\n")
+                    lines.append(f"{folder_name}/{mp3.name}\n")
+                try:
+                    with open(m3u8_file, "w", encoding="utf-8") as f:
+                        f.writelines(lines)
+                except Exception:
+                    pass
+
+    return {
+        "status": "ok",
+        "copied_count": len(copied),
+        "skipped_count": len(skipped),
+        "failed_count": len(failed),
+        "copied": copied,
+        "skipped": skipped,
+        "failed": failed
+    }
+
+@app.post("/api/watch/delete")
+def delete_tracks_from_watch(req: WatchDeleteRequest, current_user: str = Depends(get_current_user_from_req)):
+    """從手錶中刪除選取的歌曲"""
+    target_str = req.watch_path
+    if not target_str:
+        with get_db() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = 'watch_mount_path'").fetchone()
+            if row and row["value"]:
+                target_str = row["value"]
+        if not target_str:
+            drives = detect_garmin_watch_drives()
+            if drives:
+                target_str = drives[0]["path"]
+
+    if not target_str or not Path(target_str).exists():
+        raise HTTPException(status_code=400, detail="未找到 Garmin 手錶音樂磁碟")
+
+    watch_dir = Path(target_str)
+    deleted = []
+    folders_affected = set()
+
+    for rel in req.rel_paths:
+        target_file = watch_dir / rel
+        if target_file.exists():
+            try:
+                folder_name = target_file.parent.name
+                folders_affected.add(folder_name)
+                target_file.unlink()
+                deleted.append(rel)
+            except Exception:
+                pass
+
+    # 更新或移除空的 M3U8
+    for folder_name in folders_affected:
+        folder_path = watch_dir / folder_name
+        m3u8_file = watch_dir / f"{folder_name}.m3u8"
+        if folder_path.exists():
+            mp3s = list(folder_path.glob("*.mp3"))
+            if not mp3s:
+                # 若目錄已空，刪除目錄與 M3U8
+                shutil.rmtree(folder_path, ignore_errors=True)
+                if m3u8_file.exists():
+                    m3u8_file.unlink()
+            else:
+                lines = ["#EXTM3U\n"]
+                for mp3 in sorted(mp3s):
+                    lines.append(f"#EXTINF:-1,{mp3.stem}\n")
+                    lines.append(f"{folder_name}/{mp3.name}\n")
+                with open(m3u8_file, "w", encoding="utf-8") as f:
+                    f.writelines(lines)
+
+    return {"status": "ok", "deleted_count": len(deleted), "deleted": deleted}
 
 # ----------------- Serve Frontend Static Files -----------------
 if FRONTEND_DIST.exists():
