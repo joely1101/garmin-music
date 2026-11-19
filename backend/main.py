@@ -24,14 +24,20 @@ from mutagen.mp3 import MP3
 import yt_dlp
 import feedparser
 
-BASE_DIR = Path(__file__).resolve().parent
+if getattr(sys, 'frozen', False):
+    # PyInstaller 解壓路徑
+    BUNDLE_DIR = Path(sys._MEIPASS)
+    BASE_DIR = Path(sys.executable).resolve().parent
+    FRONTEND_DIST = BUNDLE_DIR / "frontend" / "dist"
+else:
+    BASE_DIR = Path(__file__).resolve().parent
+    FRONTEND_DIST = BASE_DIR.parent / "frontend" / "dist"
+
 DATA_DIR = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 MUSIC_DIR = Path(os.getenv("MUSIC_DIR", BASE_DIR / "music"))
 MUSIC_DIR.mkdir(parents=True, exist_ok=True)
-
-FRONTEND_DIST = BASE_DIR.parent / "frontend" / "dist"
 
 # 資料庫路徑相容性 (優先使用 DATA_DIR，若原本在 BASE_DIR 則向下相容)
 DB_PATH = DATA_DIR / "music.db" if (DATA_DIR / "music.db").exists() else (BASE_DIR / "music.db" if (BASE_DIR / "music.db").exists() else DATA_DIR / "music.db")
