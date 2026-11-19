@@ -20,6 +20,8 @@ import {
   ChevronDown,
   ChevronRight,
   Folder,
+  FolderOpen,
+  FileMusic,
   ListMusic,
   Edit2
 } from 'lucide-react';
@@ -937,6 +939,16 @@ export default function App() {
                     >
                       <RotateCw className="w-3.5 h-3.5" />
                     </button>
+
+                    {/* 新增目錄按鈕 */}
+                    <button
+                      onClick={() => setShowFolderModal(true)}
+                      className="px-2 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white transition text-xs flex items-center gap-1"
+                      title="新增音樂分類目錄"
+                    >
+                      <FolderPlus className="w-3.5 h-3.5 text-orange-400" />
+                      <span>新增目錄</span>
+                    </button>
                   </div>
                 </div>
 
@@ -1027,12 +1039,22 @@ export default function App() {
 
                         return (
                           <div key={folderName} className="border-b border-neutral-800/50 last:border-b-0">
-                            {/* 目錄標題節點 */}
+                            {/* Windows 檔案總管風格 - 目錄資料夾節點 */}
                             <div 
                               onClick={() => setCollapsedLocalFolders(prev => ({ ...prev, [folderName]: !prev[folderName] }))}
-                              className="px-3.5 py-2 bg-neutral-900/60 hover:bg-neutral-800/60 flex items-center justify-between cursor-pointer transition select-none"
+                              className="px-2 py-1.5 hover:bg-neutral-800/60 rounded flex items-center justify-between cursor-pointer transition select-none group"
                             >
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1.5">
+                                {/* 展開/縮合箭頭 */}
+                                <span className="p-0.5 text-neutral-400 hover:text-white">
+                                  {isCollapsed ? (
+                                    <ChevronRight className="w-3.5 h-3.5 text-neutral-400" />
+                                  ) : (
+                                    <ChevronDown className="w-3.5 h-3.5 text-neutral-300" />
+                                  )}
+                                </span>
+
+                                {/* 目錄全選勾選框 */}
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -1042,7 +1064,7 @@ export default function App() {
                                       setSelectedLocalTracks(prev => Array.from(new Set([...prev, ...folderTrackIds])));
                                     }
                                   }}
-                                  className="text-neutral-400 hover:text-white"
+                                  className="text-neutral-400 hover:text-white p-0.5"
                                   title="勾選整目錄歌曲"
                                 >
                                   {isFolderAllSelected ? (
@@ -1051,26 +1073,28 @@ export default function App() {
                                     <Square className="w-3.5 h-3.5 text-neutral-600" />
                                   )}
                                 </button>
+
+                                {/* 經典黃色檔案總管資料夾圖示 */}
                                 {isCollapsed ? (
-                                  <ChevronRight className="w-4 h-4 text-neutral-500" />
+                                  <Folder className="w-4 h-4 text-amber-400 fill-amber-400/20" />
                                 ) : (
-                                  <ChevronDown className="w-4 h-4 text-orange-400" />
+                                  <FolderOpen className="w-4 h-4 text-amber-400 fill-amber-400/20" />
                                 )}
-                                <Folder className="w-4 h-4 text-amber-500/80" />
-                                <span className="font-semibold text-xs text-neutral-200">{folderName}</span>
+
+                                <span className="font-medium text-xs text-neutral-200">{folderName}</span>
                                 <span className="text-[11px] text-neutral-500">({folderTracks.length})</span>
                               </div>
 
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition">
                                 <span className="text-[10px] text-neutral-500">
-                                  {isCollapsed ? '點擊展開' : '點擊收合'}
+                                  {isCollapsed ? '展開' : '收合'}
                                 </span>
                               </div>
                             </div>
 
-                            {/* 目錄下的歌曲清單 (縮合時隱藏) */}
+                            {/* 目錄下的歌曲清單 (縮合時隱藏) - 清楚縮排 + 樹狀延伸導引線 */}
                             {!isCollapsed && (
-                              <div className="divide-y divide-neutral-850/60 bg-neutral-950/30 pl-2">
+                              <div className="ml-5 pl-4 border-l border-neutral-800 space-y-0.5 my-0.5">
                                 {folderTracks.map(track => {
                                   const isSelected = selectedLocalTracks.includes(track.id);
                                   const isSyncedOnWatch = watchTracks.some(wt => wt.filename === `${track.title}.mp3` || wt.title === track.title);
@@ -1083,11 +1107,11 @@ export default function App() {
                                           isSelected ? prev.filter(id => id !== track.id) : [...prev, track.id]
                                         );
                                       }}
-                                      className={`px-3.5 py-2 flex items-center justify-between text-xs hover:bg-neutral-800/40 cursor-pointer transition ${
-                                        isSelected ? 'bg-orange-500/10' : ''
+                                      className={`px-2 py-1.5 rounded flex items-center justify-between text-xs hover:bg-neutral-800/50 cursor-pointer transition select-none group ${
+                                        isSelected ? 'bg-orange-500/10 text-orange-200' : 'text-neutral-300'
                                       }`}
                                     >
-                                      <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                                      <div className="flex items-center gap-2 min-w-0 pr-3">
                                         <button
                                           onClick={(e) => {
                                             e.stopPropagation();
@@ -1095,7 +1119,7 @@ export default function App() {
                                               isSelected ? prev.filter(id => id !== track.id) : [...prev, track.id]
                                             );
                                           }}
-                                          className="text-neutral-400 hover:text-white shrink-0"
+                                          className="text-neutral-400 hover:text-white shrink-0 p-0.5"
                                         >
                                           {isSelected ? (
                                             <CheckSquare className="w-3.5 h-3.5 text-orange-500" />
@@ -1104,43 +1128,50 @@ export default function App() {
                                           )}
                                         </button>
 
+                                        {/* 音訊檔案圖示 */}
+                                        <FileMusic className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+
                                         <button
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             handlePlayAudio(track.id);
                                           }}
-                                          className="w-6 h-6 rounded-full bg-neutral-800 hover:bg-orange-600 text-neutral-300 hover:text-white flex items-center justify-center shrink-0 transition"
+                                          className="w-5 h-5 rounded bg-neutral-800/80 hover:bg-orange-600 text-neutral-300 hover:text-white flex items-center justify-center shrink-0 transition"
                                           title={playingTrackId === track.id && isPlaying ? "暫停" : "試聽"}
                                         >
                                           {playingTrackId === track.id && isPlaying ? (
-                                            <Pause className="w-3 h-3" />
+                                            <Pause className="w-2.5 h-2.5" />
                                           ) : (
-                                            <Play className="w-3 h-3 ml-0.5" />
+                                            <Play className="w-2.5 h-2.5 ml-0.5" />
                                           )}
                                         </button>
 
-                                        <div className="min-w-0">
-                                          <p className={`font-medium truncate ${isSelected ? 'text-orange-300' : 'text-neutral-200'}`}>
+                                        <div className="min-w-0 flex items-center gap-2">
+                                          <span className={`font-medium truncate ${isSelected ? 'text-orange-300' : 'text-neutral-200'}`}>
                                             {track.title}
-                                          </p>
-                                          <p className="text-[11px] text-neutral-500 truncate">
-                                            {track.artist}
-                                          </p>
+                                          </span>
+                                          {track.artist && track.artist !== 'Unknown Artist' && (
+                                            <span className="text-[11px] text-neutral-500 truncate hidden sm:inline">
+                                              - {track.artist}
+                                            </span>
+                                          )}
                                         </div>
                                       </div>
 
-                                      {/* 單曲獨立操作按鈕：複製到手錶 / 刪除 */}
-                                      <div className="flex items-center gap-2 shrink-0 text-neutral-400 text-[11px]">
+                                      {/* 單曲獨立操作按鈕：複製到手錶 / 編輯 / 刪除 */}
+                                      <div className="flex items-center gap-2.5 shrink-0 text-neutral-400 text-[11px]">
                                         {isSyncedOnWatch ? (
                                           <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                                             手錶已存
                                           </span>
                                         ) : (
-                                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-neutral-800 text-neutral-500">
+                                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-neutral-800/80 text-neutral-500">
                                             未同步
                                           </span>
                                         )}
-                                        <span className="w-12 text-right">{(track.size / (1024 * 1024)).toFixed(1)} MB</span>
+                                        <span className="w-14 text-right font-mono text-[11px] text-neutral-500">
+                                          {(track.size / (1024 * 1024)).toFixed(1)} MB
+                                        </span>
 
                                         <div className="flex items-center gap-1 pl-1">
                                           <button
@@ -1148,7 +1179,7 @@ export default function App() {
                                               e.stopPropagation();
                                               handleOpenRename(track.id, track.title, false);
                                             }}
-                                            className="p-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white transition"
+                                            className="p-1 rounded hover:bg-neutral-700 text-neutral-400 hover:text-white transition"
                                             title="編輯歌名/檔案名稱"
                                           >
                                             <Edit2 className="w-3.5 h-3.5" />
@@ -1159,7 +1190,7 @@ export default function App() {
                                               handleSyncSpecificTracksToWatch([track.id]);
                                             }}
                                             disabled={syncingToWatch || !watchStatus.connected}
-                                            className="px-2 py-1 rounded bg-neutral-800 hover:bg-orange-600 text-neutral-300 hover:text-white disabled:opacity-40 transition text-[10px] flex items-center gap-1"
+                                            className="px-2 py-0.5 rounded bg-neutral-800 hover:bg-orange-600 text-neutral-300 hover:text-white disabled:opacity-40 transition text-[10px] flex items-center gap-1"
                                             title="單曲複製到手錶"
                                           >
                                             <ArrowRight className="w-3 h-3" />
@@ -1170,7 +1201,7 @@ export default function App() {
                                               e.stopPropagation();
                                               handleDeleteLocalTracks([track.id]);
                                             }}
-                                            className="p-1 rounded bg-neutral-800 hover:bg-red-600 text-neutral-400 hover:text-white transition"
+                                            className="p-1 rounded hover:bg-red-600/80 text-neutral-400 hover:text-white transition"
                                             title="從電腦刪除"
                                           >
                                             <Trash2 className="w-3.5 h-3.5" />
@@ -1333,12 +1364,21 @@ export default function App() {
 
                         return (
                           <div key={folderName} className="border-b border-neutral-800/50 last:border-b-0">
-                            {/* 手錶目錄標題節點 */}
+                            {/* Windows 檔案總管風格 - 手錶目錄資料夾節點 */}
                             <div 
                               onClick={() => setCollapsedWatchFolders(prev => ({ ...prev, [folderName]: !prev[folderName] }))}
-                              className="px-3.5 py-2 bg-neutral-900/60 hover:bg-neutral-800/60 flex items-center justify-between cursor-pointer transition select-none"
+                              className="px-2 py-1.5 hover:bg-neutral-800/60 rounded flex items-center justify-between cursor-pointer transition select-none group"
                             >
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1.5">
+                                {/* 展開/縮合箭頭 */}
+                                <span className="p-0.5 text-neutral-400 hover:text-white">
+                                  {isCollapsed ? (
+                                    <ChevronRight className="w-3.5 h-3.5 text-neutral-400" />
+                                  ) : (
+                                    <ChevronDown className="w-3.5 h-3.5 text-neutral-300" />
+                                  )}
+                                </span>
+
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -1348,7 +1388,7 @@ export default function App() {
                                       setSelectedWatchTracks(prev => Array.from(new Set([...prev, ...folderRelPaths])));
                                     }
                                   }}
-                                  className="text-neutral-400 hover:text-white"
+                                  className="text-neutral-400 hover:text-white p-0.5"
                                   title="勾選整目錄手錶歌曲"
                                 >
                                   {isFolderAllSelected ? (
@@ -1357,26 +1397,28 @@ export default function App() {
                                     <Square className="w-3.5 h-3.5 text-neutral-600" />
                                   )}
                                 </button>
+
+                                {/* 經典黃色檔案總管資料夾圖示 */}
                                 {isCollapsed ? (
-                                  <ChevronRight className="w-4 h-4 text-neutral-500" />
+                                  <Folder className="w-4 h-4 text-amber-400 fill-amber-400/20" />
                                 ) : (
-                                  <ChevronDown className="w-4 h-4 text-orange-400" />
+                                  <FolderOpen className="w-4 h-4 text-amber-400 fill-amber-400/20" />
                                 )}
-                                <Folder className="w-4 h-4 text-amber-500/80" />
-                                <span className="font-semibold text-xs text-neutral-200">{folderName}</span>
+
+                                <span className="font-medium text-xs text-neutral-200">{folderName}</span>
                                 <span className="text-[11px] text-neutral-500">({folderTracks.length})</span>
                               </div>
 
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition">
                                 <span className="text-[10px] text-neutral-500">
-                                  {isCollapsed ? '點擊展開' : '點擊收合'}
+                                  {isCollapsed ? '展開' : '收合'}
                                 </span>
                               </div>
                             </div>
 
-                            {/* 手錶目錄下的歌曲清單 (縮合時隱藏) */}
+                            {/* 手錶目錄下的歌曲清單 (縮合時隱藏) - 清楚縮排 + 樹狀延伸導引線 */}
                             {!isCollapsed && (
-                              <div className="divide-y divide-neutral-850/60 bg-neutral-950/30 pl-2">
+                              <div className="ml-5 pl-4 border-l border-neutral-800 space-y-0.5 my-0.5">
                                 {folderTracks.map(track => {
                                   const isSelected = selectedWatchTracks.includes(track.rel_path);
 
@@ -1388,11 +1430,11 @@ export default function App() {
                                           isSelected ? prev.filter(p => p !== track.rel_path) : [...prev, track.rel_path]
                                         );
                                       }}
-                                      className={`px-3.5 py-2 flex items-center justify-between text-xs hover:bg-neutral-800/40 cursor-pointer transition ${
-                                        isSelected ? 'bg-orange-500/10' : ''
+                                      className={`px-2 py-1.5 rounded flex items-center justify-between text-xs hover:bg-neutral-800/50 cursor-pointer transition select-none group ${
+                                        isSelected ? 'bg-orange-500/10 text-orange-200' : 'text-neutral-300'
                                       }`}
                                     >
-                                      <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                                      <div className="flex items-center gap-2 min-w-0 pr-3">
                                         <button
                                           onClick={(e) => {
                                             e.stopPropagation();
@@ -1400,7 +1442,7 @@ export default function App() {
                                               isSelected ? prev.filter(p => p !== track.rel_path) : [...prev, track.rel_path]
                                             );
                                           }}
-                                          className="text-neutral-400 hover:text-white shrink-0"
+                                          className="text-neutral-400 hover:text-white shrink-0 p-0.5"
                                         >
                                           {isSelected ? (
                                             <CheckSquare className="w-3.5 h-3.5 text-orange-500" />
@@ -1409,27 +1451,34 @@ export default function App() {
                                           )}
                                         </button>
 
-                                        <div className="min-w-0">
-                                          <p className={`font-medium truncate ${isSelected ? 'text-orange-300' : 'text-neutral-200'}`}>
+                                        {/* 音訊檔案圖示 */}
+                                        <FileMusic className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+
+                                        <div className="min-w-0 flex items-center gap-2">
+                                          <span className={`font-medium truncate ${isSelected ? 'text-orange-300' : 'text-neutral-200'}`}>
                                             {track.title}
-                                          </p>
-                                          <p className="text-[11px] text-neutral-500 truncate">
-                                            {track.artist}
-                                          </p>
+                                          </span>
+                                          {track.artist && track.artist !== 'Unknown Artist' && (
+                                            <span className="text-[11px] text-neutral-500 truncate hidden sm:inline">
+                                              - {track.artist}
+                                            </span>
+                                          )}
                                         </div>
                                       </div>
 
                                       {/* 手錶歌曲單曲操作：編輯 / 刪除 */}
-                                      <div className="flex items-center gap-2 shrink-0 text-neutral-400 text-[11px]">
-                                        <span>{(track.size / (1024 * 1024)).toFixed(1)} MB</span>
+                                      <div className="flex items-center gap-2.5 shrink-0 text-neutral-400 text-[11px]">
+                                        <span className="w-14 text-right font-mono text-[11px] text-neutral-500">
+                                          {(track.size / (1024 * 1024)).toFixed(1)} MB
+                                        </span>
 
-                                        <div className="flex items-center gap-1">
+                                        <div className="flex items-center gap-1 pl-1">
                                           <button
                                             onClick={(e) => {
                                               e.stopPropagation();
                                               handleOpenRename(track.rel_path, track.title, true);
                                             }}
-                                            className="p-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white transition"
+                                            className="p-1 rounded hover:bg-neutral-700 text-neutral-400 hover:text-white transition"
                                             title="編輯手錶歌名/檔案名稱"
                                           >
                                             <Edit2 className="w-3.5 h-3.5" />
@@ -1440,7 +1489,7 @@ export default function App() {
                                               handleDeleteSpecificWatchTracks([track.rel_path]);
                                             }}
                                             disabled={deletingFromWatch}
-                                            className="p-1 rounded bg-neutral-800 hover:bg-red-600 text-neutral-400 hover:text-white transition"
+                                            className="p-1 rounded hover:bg-red-600/80 text-neutral-400 hover:text-white transition"
                                             title="從手錶刪除"
                                           >
                                             <Trash2 className="w-3.5 h-3.5" />
