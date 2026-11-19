@@ -20,7 +20,8 @@ import {
   ChevronDown,
   ChevronRight,
   Folder,
-  ListMusic
+  ListMusic,
+  Edit2
 } from 'lucide-react';
 
 interface LocalTrack {
@@ -154,8 +155,15 @@ export default function App() {
   const [customPlaylistName, setCustomPlaylistName] = useState('');
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
 
+  // Rename Modal State
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<{ idOrRelPath: string; currentTitle: string; isWatch: boolean } | null>(null);
+  const [newTitleInput, setNewTitleInput] = useState('');
+  const [renaming, setRenaming] = useState(false);
+
   // Custom Path Input
   const [customPathInput, setCustomPathInput] = useState('');
+  const [detectingWatch, setDetectingWatch] = useState(false);
 
   // Initial Load
   useEffect(() => {
@@ -312,6 +320,38 @@ export default function App() {
     }
   };
 
+  const handleAutoDetectWatch = async () => {
+    setDetectingWatch(true);
+    try {
+      const res = await fetch('/api/watch/status');
+      if (res.ok) {
+        const data: WatchStatus = await res.json();
+        setWatchStatus(data);
+        if (data.detected_drives && data.detected_drives.length > 0) {
+          const detected = data.detected_drives[0].path;
+          setCustomPathInput(detected);
+          // 自動套用儲存
+          await fetch('/api/watch/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: detected })
+          });
+          await fetchWatchStatus();
+          alert(`自動偵測成功！已找到手錶路徑：${detected}`);
+        } else if (data.active_watch?.path) {
+          setCustomPathInput(data.active_watch.path);
+          alert(`手錶目前已連線，路徑為：${data.active_watch.path}`);
+        } else {
+          alert('電腦各磁碟中未找到 Garmin 手錶或 Music 目錄結構，請確認 USB 線已接好或手動指定。');
+        }
+      }
+    } catch (e: any) {
+      alert(`偵測失敗: ${e.message}`);
+    } finally {
+      setDetectingWatch(false);
+    }
+  };
+
   // ---------------- YouTube Download ----------------
   const handleStartDownload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -461,6 +501,60 @@ export default function App() {
       await fetchLocalTracks();
     } finally {
       setLoadingLocal(false);
+    }
+  };
+
+  // ---------------- Rename Track ----------------
+  const handleOpenRename = (idOrRelPath: string, currentTitle: string, isWatch: boolean) => {
+    setRenameTarget({ idOrRelPath, currentTitle, isWatch });
+    setNewTitleInput(currentTitle);
+    setShowRenameModal(true);
+  };
+
+  const handleSubmitRename = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!renameTarget || !newTitleInput.trim()) return;
+    const trimmed = newTitleInput.trim();
+
+    setRenaming(true);
+    try {
+      if (renameTarget.isWatch) {
+        // 手錶重新命名
+        const res = await fetch('/api/watch/tracks/rename', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rel_path: renameTarget.idOrRelPath,
+            new_title: trimmed,
+            watch_path: watchStatus.active_watch?.path
+          })
+        });
+        if (res.ok) {
+          setShowRenameModal(false);
+          await fetchWatchTracks();
+        } else {
+          const err = await res.json().catch(() => ({}));
+          alert(err.detail || '重新命名失敗');
+        }
+      } else {
+        // 電腦本地重新命名
+        const res = await fetch(`/api/tracks/${renameTarget.idOrRelPath}/rename`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_title: trimmed })
+        });
+        if (res.ok) {
+          setShowRenameModal(false);
+          await fetchLocalTracks();
+        } else {
+          const err = await res.json().catch(() => ({}));
+          alert(err.detail || '重新命名失敗');
+        }
+      }
+    } catch (e: any) {
+      alert(`操作異常: ${e.message}`);
+    } finally {
+      setRenaming(false);
     }
   };
 
@@ -794,12 +888,12 @@ export default function App() {
         {/* 內容區塊 */}
         <div className="flex-1 overflow-hidden p-6">
           
-          {/* TAB 1: 雙欄同步管理主面板 (Dual Pane Manager) */}
+          {/* TAB 1: 音樂同步管理 (電腦上層、手錶下層) */}
           {activeTab === 'manager' && (
-            <div className="grid grid-cols-2 gap-5 h-full">
+            <div className="flex flex-col gap-5 h-full overflow-hidden">
               
-              {/* === 左側欄：電腦本地音樂庫 === */}
-              <div className="bg-neutral-900/60 border border-neutral-800 rounded-xl flex flex-col overflow-hidden shadow-sm">
+              {/* === 上方欄：電腦本地音樂庫 === */}
+              <div className="flex-1 min-h-0 bg-neutral-900/60 border border-neutral-800 rounded-xl flex flex-col overflow-hidden shadow-sm">
                 
                 {/* 欄位頂部工具列 */}
                 <div className="p-3.5 border-b border-neutral-800 bg-neutral-900/80 flex items-center justify-between gap-3">
@@ -1052,6 +1146,16 @@ export default function App() {
                                           <button
                                             onClick={(e) => {
                                               e.stopPropagation();
+                                              handleOpenRename(track.id, track.title, false);
+                                            }}
+                                            className="p-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white transition"
+                                            title="編輯歌名/檔案名稱"
+                                          >
+                                            <Edit2 className="w-3.5 h-3.5" />
+                                          </button>
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
                                               handleSyncSpecificTracksToWatch([track.id]);
                                             }}
                                             disabled={syncingToWatch || !watchStatus.connected}
@@ -1086,8 +1190,8 @@ export default function App() {
                 </div>
               </div>
 
-              {/* === 右側欄：手錶儲存庫 (Garmin Watch Pane) === */}
-              <div className="bg-neutral-900/60 border border-neutral-800 rounded-xl flex flex-col overflow-hidden shadow-sm">
+              {/* === 下方欄：手錶儲存庫 (Garmin Watch Pane) === */}
+              <div className="flex-1 min-h-0 bg-neutral-900/60 border border-neutral-800 rounded-xl flex flex-col overflow-hidden shadow-sm">
                 
                 {/* 欄位頂部工具列 */}
                 <div className="p-3.5 border-b border-neutral-800 bg-neutral-900/80 flex items-center justify-between gap-3">
@@ -1315,21 +1419,33 @@ export default function App() {
                                         </div>
                                       </div>
 
-                                      {/* 手錶歌曲單曲操作：只有刪除 */}
+                                      {/* 手錶歌曲單曲操作：編輯 / 刪除 */}
                                       <div className="flex items-center gap-2 shrink-0 text-neutral-400 text-[11px]">
                                         <span>{(track.size / (1024 * 1024)).toFixed(1)} MB</span>
 
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleDeleteSpecificWatchTracks([track.rel_path]);
-                                          }}
-                                          disabled={deletingFromWatch}
-                                          className="p-1 rounded bg-neutral-800 hover:bg-red-600 text-neutral-400 hover:text-white transition"
-                                          title="從手錶刪除"
-                                        >
-                                          <Trash2 className="w-3.5 h-3.5" />
-                                        </button>
+                                        <div className="flex items-center gap-1">
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleOpenRename(track.rel_path, track.title, true);
+                                            }}
+                                            className="p-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white transition"
+                                            title="編輯手錶歌名/檔案名稱"
+                                          >
+                                            <Edit2 className="w-3.5 h-3.5" />
+                                          </button>
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleDeleteSpecificWatchTracks([track.rel_path]);
+                                            }}
+                                            disabled={deletingFromWatch}
+                                            className="p-1 rounded bg-neutral-800 hover:bg-red-600 text-neutral-400 hover:text-white transition"
+                                            title="從手錶刪除"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
                                       </div>
                                     </div>
                                   );
@@ -1565,7 +1681,7 @@ export default function App() {
                 <div>
                   <h3 className="text-base font-bold text-white mb-1">手錶音樂磁碟路徑設定</h3>
                   <p className="text-xs text-neutral-400">
-                    系統會自動偵測插入的 Garmin 手錶。若手錶掛載在特殊代號或自訂目錄，可在下方直接輸入手動指定。
+                    可手動輸入手錶音樂資料夾路徑，或點選「自動偵測」讓系統搜尋電腦各磁碟中的手錶/Music目錄結構。
                   </p>
                 </div>
 
@@ -1576,46 +1692,28 @@ export default function App() {
                   <div className="flex gap-2">
                     <input
                       type="text"
-                      placeholder="例如 E:\GARMIN\Music 或 F:\Music"
+                      placeholder="手動輸入路徑（例如 D:\garmin\music 或 E:\GARMIN\Music）"
                       value={customPathInput}
                       onChange={(e) => setCustomPathInput(e.target.value)}
                       className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-3.5 py-2 text-sm text-neutral-100 focus:outline-none focus:border-orange-500 font-mono"
                     />
                     <button
+                      onClick={handleAutoDetectWatch}
+                      disabled={detectingWatch}
+                      className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 rounded-lg text-sm font-medium flex items-center gap-1.5 transition shrink-0"
+                      title="搜尋電腦內磁碟尋找手錶目錄結構"
+                    >
+                      {detectingWatch ? <Loader2 className="w-4 h-4 animate-spin text-orange-400" /> : <RotateCw className="w-4 h-4 text-orange-400" />}
+                      <span>自動偵測</span>
+                    </button>
+                    <button
                       onClick={handleSaveWatchPath}
-                      className="px-5 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-sm font-medium transition"
+                      disabled={!customPathInput.trim()}
+                      className="px-5 py-2 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition shrink-0"
                     >
                       儲存設定
                     </button>
                   </div>
-                </div>
-
-                {/* 偵測到的候選磁碟機 */}
-                <div className="pt-2 border-t border-neutral-800">
-                  <h4 className="text-xs font-semibold text-neutral-300 mb-2">自動掃描到的候選磁碟：</h4>
-                  {watchStatus.detected_drives.length === 0 ? (
-                    <p className="text-xs text-neutral-500">目前未掃描到包含 Music 的抽取式磁碟槽</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {watchStatus.detected_drives.map(d => (
-                        <div key={d.path} className="p-3 bg-neutral-950 rounded-lg border border-neutral-800 flex items-center justify-between text-xs">
-                          <div>
-                            <p className="font-semibold text-neutral-200">{d.label}</p>
-                            <p className="text-neutral-500 font-mono text-[11px]">{d.path}</p>
-                          </div>
-                          <button
-                            onClick={() => {
-                              setCustomPathInput(d.path);
-                              handleSaveWatchPath();
-                            }}
-                            className="px-3 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded text-xs transition"
-                          >
-                            套用此磁碟
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
                 </div>
 
                 {/* 手錶規格提醒 */}
@@ -1676,6 +1774,58 @@ export default function App() {
                 >
                   {creatingPlaylist && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>建立清單</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 編輯歌名/檔案名稱彈窗 */}
+      {showRenameModal && renameTarget && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-5 max-w-sm w-full space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Edit2 className="w-4 h-4 text-orange-400" />
+                <span>重新命名{renameTarget.isWatch ? '手錶' : '電腦'}歌曲檔案</span>
+              </h3>
+              <button onClick={() => setShowRenameModal(false)} className="text-neutral-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleSubmitRename} className="space-y-4">
+              <div>
+                <label className="block text-xs text-neutral-400 mb-1.5">
+                  歌曲名稱 / 檔案名稱 (.mp3)
+                </label>
+                <input
+                  type="text"
+                  placeholder="請輸入新名稱"
+                  value={newTitleInput}
+                  onChange={(e) => setNewTitleInput(e.target.value)}
+                  autoFocus
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3.5 py-2 text-sm text-neutral-100 focus:outline-none focus:border-orange-500"
+                />
+                <p className="text-[11px] text-neutral-500 mt-1.5">
+                  將自動同步修改實體檔案名及 ID3 標籤中的歌曲標題。
+                </p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowRenameModal(false)}
+                  className="px-4 py-1.5 bg-neutral-800 text-neutral-300 rounded-lg text-xs"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={!newTitleInput.trim() || renaming}
+                  className="px-4 py-1.5 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium flex items-center gap-1.5"
+                >
+                  {renaming && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>儲存修改</span>
                 </button>
               </div>
             </form>

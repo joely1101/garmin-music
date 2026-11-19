@@ -798,6 +798,113 @@ def batch_sync_folder(folder: str, enabled: bool = Query(...), current_user: str
         conn.commit()
     return {"status": "ok", "folder": folder, "sync_enabled": enabled}
 
+class RenameTrackRequest(BaseModel):
+    new_title: str
+
+@app.put("/api/tracks/{track_id}/rename")
+def rename_track(track_id: str, req: RenameTrackRequest, current_user: str = Depends(get_current_user_from_req)):
+    clean_title = re.sub(r'[\\/*?:"<>|]', "", req.new_title).strip()
+    if not clean_title:
+        raise HTTPException(status_code=400, detail="歌名/檔案名稱無效")
+
+    with get_db() as conn:
+        track = conn.execute("SELECT * FROM tracks WHERE id = ?", (track_id,)).fetchone()
+        if not track:
+            raise HTTPException(status_code=404, detail="Track not found")
+
+        old_file = MUSIC_DIR / track["rel_path"]
+        if not old_file.exists():
+            raise HTTPException(status_code=404, detail="File not found on disk")
+
+        new_file = old_file.parent / f"{clean_title}.mp3"
+        if new_file.resolve() != old_file.resolve():
+            if new_file.exists():
+                raise HTTPException(status_code=400, detail="已有相同名稱的檔案存在")
+            try:
+                old_file.rename(new_file)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"重新命名實體檔案失敗: {str(e)}")
+
+        # 更新 ID3 Title
+        try:
+            audio = MP3(str(new_file), ID3=EasyID3)
+            audio["title"] = clean_title
+            audio.save()
+        except Exception:
+            pass
+
+        new_rel_path = new_file.relative_to(MUSIC_DIR).as_posix()
+        conn.execute("UPDATE tracks SET title = ?, rel_path = ? WHERE id = ?", (clean_title, new_rel_path, track_id))
+        conn.commit()
+
+    return {"status": "ok", "id": track_id, "title": clean_title, "rel_path": new_rel_path}
+
+class RenameWatchTrackRequest(BaseModel):
+    rel_path: str
+    new_title: str
+    watch_path: Optional[str] = None
+
+@app.put("/api/watch/tracks/rename")
+def rename_watch_track(req: RenameWatchTrackRequest, current_user: str = Depends(get_current_user_from_req)):
+    clean_title = re.sub(r'[\\/*?:"<>|]', "", req.new_title).strip()
+    if not clean_title:
+        raise HTTPException(status_code=400, detail="歌名/檔案名稱無效")
+
+    target_str = req.watch_path
+    if not target_str:
+        with get_db() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = 'watch_mount_path'").fetchone()
+            if row and row["value"]:
+                target_str = row["value"]
+        if not target_str:
+            drives = detect_garmin_watch_drives()
+            if drives:
+                target_str = drives[0]["path"]
+
+    if not target_str or not Path(target_str).exists():
+        raise HTTPException(status_code=400, detail="未找到 Garmin 手錶音樂磁碟")
+
+    watch_dir = Path(target_str)
+    old_file = watch_dir / req.rel_path
+    if not old_file.exists():
+        raise HTTPException(status_code=404, detail="手錶上的檔案不存在")
+
+    new_file = old_file.parent / f"{clean_title}.mp3"
+    if new_file.resolve() != old_file.resolve():
+        if new_file.exists():
+            raise HTTPException(status_code=400, detail="手錶該目錄下已有同名檔案")
+        try:
+            old_file.rename(new_file)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"重新命名手錶檔案失敗: {str(e)}")
+
+    # 更新 ID3 Title
+    try:
+        audio = MP3(str(new_file), ID3=EasyID3)
+        audio["title"] = clean_title
+        audio.save()
+    except Exception:
+        pass
+
+    new_rel_path = str(new_file.relative_to(watch_dir)).replace("\\", "/")
+
+    # 更新手錶目錄下的 M3U8 播放清單
+    folder_name = new_file.parent.name
+    m3u8_file = watch_dir / f"{folder_name}.m3u8"
+    if m3u8_file.exists():
+        mp3s = sorted(new_file.parent.glob("*.mp3"))
+        lines = ["#EXTM3U\n"]
+        for mp3 in mp3s:
+            lines.append(f"#EXTINF:-1,{mp3.stem}\n")
+            lines.append(f"{folder_name}/{mp3.name}\n")
+        try:
+            with open(m3u8_file, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+        except Exception:
+            pass
+
+    return {"status": "ok", "rel_path": new_rel_path, "title": clean_title}
+
 @app.delete("/api/tracks/{track_id}")
 def delete_track(track_id: str, current_user: str = Depends(get_current_user_from_req)):
     with get_db() as conn:
@@ -1157,12 +1264,15 @@ def detect_garmin_watch_drives() -> List[Dict[str, Any]]:
             
         try:
             total, used, free = shutil.disk_usage(drive_str)
-            # 尋找標準 Garmin 目錄
+            # 尋找標準 Garmin 目錄或任何包含 Music / music 的手錶結構
             possible_dirs = [
                 drive_path / "GARMIN" / "Music",
                 drive_path / "Garmin" / "Music",
                 drive_path / "GARMIN" / "music",
-                drive_path / "Music"
+                drive_path / "Garmin" / "music",
+                drive_path / "garmin" / "music",
+                drive_path / "Music",
+                drive_path / "music",
             ]
             
             for p in possible_dirs:
