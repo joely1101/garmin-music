@@ -471,10 +471,14 @@ def subsonic_stream(id: str = Query(...), user: str = Depends(verify_subsonic_au
         )
 
 @app.get("/api/tracks/{id}/stream")
-def web_stream_track(id: str, token: Optional[str] = Query(None)):
-    username = verify_web_token(token)
-    if not username:
-        raise HTTPException(status_code=401, detail="Unauthorized: Invalid or missing token")
+def web_stream_track(id: str, token: Optional[str] = Query(None), current_user: str = Depends(get_current_user_from_req)):
+    # 支援透過 query token 或 Bearer header 或本機預設 (get_current_user_from_req)
+    username = current_user
+    if token:
+        v_user = verify_web_token(token)
+        if v_user:
+            username = v_user
+
     with get_db() as conn:
         # Admin 可以播放全部歌曲，一般用戶僅可播放自己的歌曲
         user_row = conn.execute("SELECT role FROM users WHERE username = ?", (username,)).fetchone()
@@ -802,6 +806,41 @@ def delete_track(track_id: str, current_user: str = Depends(get_current_user_fro
         conn.execute("DELETE FROM tracks WHERE id = ?", (track_id,))
         conn.commit()
     return {"status": "deleted", "id": track_id}
+
+class BatchDeleteTracksRequest(BaseModel):
+    track_ids: List[str]
+
+@app.post("/api/tracks/batch-delete")
+def batch_delete_tracks(req: BatchDeleteTracksRequest, current_user: str = Depends(get_current_user_from_req)):
+    deleted_ids = []
+    with get_db() as conn:
+        user_row = conn.execute("SELECT role FROM users WHERE username = ?", (current_user,)).fetchone()
+        is_admin = user_row and user_row["role"] == "admin"
+
+        for tid in req.track_ids:
+            cur = conn.execute("SELECT rel_path, user FROM tracks WHERE id = ?", (tid,))
+            row = cur.fetchone()
+            if not row:
+                continue
+            if row["user"] != current_user and not is_admin:
+                continue
+            
+            file_path = MUSIC_DIR / row["rel_path"]
+            if file_path.exists():
+                try:
+                    file_path.unlink()
+                except Exception:
+                    pass
+            conn.execute("DELETE FROM tracks WHERE id = ?", (tid,))
+            deleted_ids.append(tid)
+
+        conn.commit()
+    return {"status": "ok", "deleted": deleted_ids}
+
+@app.post("/api/scan")
+def trigger_scan(current_user: str = Depends(get_current_user_from_req)):
+    scan_and_sync_files()
+    return {"status": "ok"}
 
 @app.post("/api/tracks/upload")
 async def upload_mp3(folder: str = Form("音樂"), file: UploadFile = File(...), current_user: str = Depends(get_current_user_from_req)):

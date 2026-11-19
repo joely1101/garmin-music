@@ -16,7 +16,10 @@ import {
   HardDrive, 
   Music2,
   Settings,
-  X
+  X,
+  ChevronDown,
+  ChevronRight,
+  Folder
 } from 'lucide-react';
 
 interface LocalTrack {
@@ -124,8 +127,13 @@ export default function App() {
   // Download State
   const [ytUrl, setYtUrl] = useState('');
   const [downloadFolder, setDownloadFolder] = useState('音樂');
+  const [downloadPlaylist, setDownloadPlaylist] = useState(false);
   const [downloadTasks, setDownloadTasks] = useState<Record<string, DownloadTask>>({});
   const [isDownloading, setIsDownloading] = useState(false);
+
+  // Tree View Collapse State (folder name -> isCollapsed)
+  const [collapsedLocalFolders, setCollapsedLocalFolders] = useState<Record<string, boolean>>({});
+  const [collapsedWatchFolders, setCollapsedWatchFolders] = useState<Record<string, boolean>>({});
 
   // Podcast State
   const [podcastQuery, setPodcastQuery] = useState('');
@@ -267,83 +275,6 @@ export default function App() {
   };
 
   // ---------------- Sync Actions ----------------
-  const handleSyncToWatch = async () => {
-    if (selectedLocalTracks.length === 0) {
-      alert('請先在左側勾選要複製到手錶的歌曲');
-      return;
-    }
-    if (!watchStatus.connected) {
-      alert('未偵測到手錶磁碟，請先以 USB 連接 Garmin 手錶，或在設定中指定手錶路徑');
-      return;
-    }
-
-    setSyncingToWatch(true);
-    setSyncMessage(`正在同步 ${selectedLocalTracks.length} 首歌曲至手錶...`);
-
-    try {
-      const res = await fetch('/api/watch/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          track_ids: selectedLocalTracks,
-          watch_path: watchStatus.active_watch?.path
-        })
-      });
-
-      if (res.ok) {
-        const result = await res.json();
-        setSyncMessage(`✅ 同步完成！成功複製: ${result.copied_count} 首, 略過(已存在): ${result.skipped_count} 首`);
-        setSelectedLocalTracks([]);
-        await fetchWatchTracks();
-        await fetchWatchStatus();
-      } else {
-        const err = await res.json();
-        setSyncMessage(`❌ 同步失敗: ${err.detail || '未知錯誤'}`);
-      }
-    } catch (e: any) {
-      setSyncMessage(`❌ 傳輸異常: ${e.message}`);
-    } finally {
-      setSyncingToWatch(false);
-      setTimeout(() => setSyncMessage(null), 6000);
-    }
-  };
-
-  const handleDeleteFromWatch = async () => {
-    if (selectedWatchTracks.length === 0) {
-      alert('請先在右側勾選要從手錶刪除的歌曲');
-      return;
-    }
-
-    if (!confirm(`確定要從手錶中刪除選取的 ${selectedWatchTracks.length} 首歌曲嗎？`)) {
-      return;
-    }
-
-    setDeletingFromWatch(true);
-    try {
-      const res = await fetch('/api/watch/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rel_paths: selectedWatchTracks,
-          watch_path: watchStatus.active_watch?.path
-        })
-      });
-
-      if (res.ok) {
-        setSelectedWatchTracks([]);
-        await fetchWatchTracks();
-        await fetchWatchStatus();
-      } else {
-        const err = await res.json();
-        alert(`刪除失敗: ${err.detail || '未知錯誤'}`);
-      }
-    } catch (e: any) {
-      alert(`刪除異常: ${e.message}`);
-    } finally {
-      setDeletingFromWatch(false);
-    }
-  };
-
   const handleSaveWatchPath = async () => {
     if (!customPathInput.trim()) return;
     try {
@@ -376,7 +307,7 @@ export default function App() {
         body: JSON.stringify({
           url: ytUrl.trim(),
           target_folder: downloadFolder,
-          download_playlist: false
+          download_playlist: downloadPlaylist
         })
       });
       if (res.ok) {
@@ -446,18 +377,138 @@ export default function App() {
   // ---------------- Folder Creation ----------------
   const handleCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newFolderName.trim()) return;
+    const trimmed = newFolderName.trim();
+    if (!trimmed) return;
+    if (trimmed.includes('/') || trimmed.includes('\\')) {
+      alert('目錄名稱僅限一層，不可包含路徑斜線 (/) 或 (\\)');
+      return;
+    }
     try {
-      const res = await fetch(`/api/folders?folder_name=${encodeURIComponent(newFolderName.trim())}`, {
+      const res = await fetch(`/api/folders?folder_name=${encodeURIComponent(trimmed)}`, {
         method: 'POST'
       });
       if (res.ok) {
         setNewFolderName('');
         setShowFolderModal(false);
         await fetchFolders();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || '建立目錄失敗');
       }
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      alert(`連線失敗: ${e.message}`);
+    }
+  };
+
+  // ---------------- Refresh All ----------------
+  const handleRefreshLocal = async () => {
+    setLoadingLocal(true);
+    try {
+      await fetch('/api/scan', { method: 'POST' }).catch(() => {});
+      await fetchFolders();
+      await fetchLocalTracks();
+    } finally {
+      setLoadingLocal(false);
+    }
+  };
+
+  // ---------------- Batch / Single Track Delete ----------------
+  const handleDeleteLocalTracks = async (trackIds: string[]) => {
+    if (trackIds.length === 0) return;
+    const confirmText = trackIds.length === 1 
+      ? '確定要從電腦刪除這首歌曲嗎？' 
+      : `確定要從電腦刪除選取的 ${trackIds.length} 首歌曲嗎？`;
+    if (!confirm(confirmText)) return;
+
+    try {
+      const res = await fetch('/api/tracks/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ track_ids: trackIds })
+      });
+      if (res.ok) {
+        setSelectedLocalTracks(prev => prev.filter(id => !trackIds.includes(id)));
+        if (playingTrackId && trackIds.includes(playingTrackId)) {
+          audioRef.current?.pause();
+          setIsPlaying(false);
+          setPlayingTrackId(null);
+        }
+        await fetchLocalTracks();
+      } else {
+        alert('刪除失敗');
+      }
+    } catch (e: any) {
+      alert(`刪除異常: ${e.message}`);
+    }
+  };
+
+  const handleSyncSpecificTracksToWatch = async (trackIds: string[]) => {
+    if (trackIds.length === 0) return;
+    if (!watchStatus.connected) {
+      alert('未偵測到手錶磁碟，請先以 USB 連接 Garmin 手錶，或在設定中指定手錶路徑');
+      return;
+    }
+
+    setSyncingToWatch(true);
+    setSyncMessage(`正在同步 ${trackIds.length} 首歌曲至手錶...`);
+
+    try {
+      const res = await fetch('/api/watch/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          track_ids: trackIds,
+          watch_path: watchStatus.active_watch?.path
+        })
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        setSyncMessage(`✅ 同步完成！成功複製: ${result.copied_count} 首, 略過(已存在): ${result.skipped_count} 首`);
+        await fetchWatchTracks();
+        await fetchWatchStatus();
+      } else {
+        const err = await res.json();
+        setSyncMessage(`❌ 同步失敗: ${err.detail || '未知錯誤'}`);
+      }
+    } catch (e: any) {
+      setSyncMessage(`❌ 傳輸異常: ${e.message}`);
+    } finally {
+      setSyncingToWatch(false);
+      setTimeout(() => setSyncMessage(null), 6000);
+    }
+  };
+
+  const handleDeleteSpecificWatchTracks = async (relPaths: string[]) => {
+    if (relPaths.length === 0) return;
+    const confirmText = relPaths.length === 1
+      ? '確定要從手錶中刪除這首歌曲嗎？'
+      : `確定要從手錶中刪除選取的 ${relPaths.length} 首歌曲嗎？`;
+    if (!confirm(confirmText)) return;
+
+    setDeletingFromWatch(true);
+    try {
+      const res = await fetch('/api/watch/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rel_paths: relPaths,
+          watch_path: watchStatus.active_watch?.path
+        })
+      });
+
+      if (res.ok) {
+        setSelectedWatchTracks(prev => prev.filter(p => !relPaths.includes(p)));
+        await fetchWatchTracks();
+        await fetchWatchStatus();
+      } else {
+        const err = await res.json();
+        alert(`刪除失敗: ${err.detail || '未知錯誤'}`);
+      }
+    } catch (e: any) {
+      alert(`刪除異常: ${e.message}`);
+    } finally {
+      setDeletingFromWatch(false);
     }
   };
 
@@ -683,7 +734,7 @@ export default function App() {
           
           {/* TAB 1: 雙欄同步管理主面板 (Dual Pane Manager) */}
           {activeTab === 'manager' && (
-            <div className="grid grid-cols-[1fr,88px,1fr] gap-4 h-full">
+            <div className="grid grid-cols-2 gap-5 h-full">
               
               {/* === 左側欄：電腦本地音樂庫 === */}
               <div className="bg-neutral-900/60 border border-neutral-800 rounded-xl flex flex-col overflow-hidden shadow-sm">
@@ -721,38 +772,72 @@ export default function App() {
                         className="w-full bg-neutral-800 border border-neutral-700 text-neutral-200 text-xs rounded-lg pl-8 pr-2.5 py-1.5 focus:outline-none focus:border-orange-500"
                       />
                     </div>
+
+                    {/* 重新整理電腦曲庫按鈕 */}
+                    <button
+                      onClick={handleRefreshLocal}
+                      className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white transition"
+                      title="重新整理電腦音樂庫"
+                    >
+                      <RotateCw className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
 
-                {/* 全選控制列 */}
+                {/* 全選與多選操作工具列 */}
                 <div className="px-4 py-2 bg-neutral-900/40 border-b border-neutral-800/80 flex items-center justify-between text-xs text-neutral-400">
-                  <button
-                    onClick={() => {
-                      if (selectedLocalTracks.length === filteredLocalTracks.length) {
-                        setSelectedLocalTracks([]);
-                      } else {
-                        setSelectedLocalTracks(filteredLocalTracks.map(t => t.id));
-                      }
-                    }}
-                    className="flex items-center gap-2 hover:text-white transition"
-                  >
-                    {selectedLocalTracks.length > 0 && selectedLocalTracks.length === filteredLocalTracks.length ? (
-                      <CheckSquare className="w-4 h-4 text-orange-500" />
-                    ) : (
-                      <Square className="w-4 h-4 text-neutral-500" />
-                    )}
-                    <span>全選 ({selectedLocalTracks.length}/{filteredLocalTracks.length})</span>
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => {
+                        if (selectedLocalTracks.length === filteredLocalTracks.length) {
+                          setSelectedLocalTracks([]);
+                        } else {
+                          setSelectedLocalTracks(filteredLocalTracks.map(t => t.id));
+                        }
+                      }}
+                      className="flex items-center gap-2 hover:text-white transition"
+                    >
+                      {selectedLocalTracks.length > 0 && selectedLocalTracks.length === filteredLocalTracks.length ? (
+                        <CheckSquare className="w-4 h-4 text-orange-500" />
+                      ) : (
+                        <Square className="w-4 h-4 text-neutral-500" />
+                      )}
+                      <span>全選 ({selectedLocalTracks.length}/{filteredLocalTracks.length})</span>
+                    </button>
 
+                    {selectedLocalTracks.length > 0 && (
+                      <span className="text-orange-400 font-medium">
+                        已選 {(selectedLocalBytes / (1024 * 1024)).toFixed(1)} MB
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 多選批量操作按鍵 */}
                   {selectedLocalTracks.length > 0 && (
-                    <span className="text-orange-400 font-medium">
-                      已選 {(selectedLocalBytes / (1024 * 1024)).toFixed(1)} MB
-                    </span>
+                    <div className="flex items-center gap-2 animate-fadeIn">
+                      <button
+                        disabled={syncingToWatch || !watchStatus.connected}
+                        onClick={() => handleSyncSpecificTracksToWatch(selectedLocalTracks)}
+                        className="px-2.5 py-1 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white rounded text-xs font-medium flex items-center gap-1.5 transition shadow-sm"
+                        title="將選取歌曲全部複製到手錶"
+                      >
+                        {syncingToWatch ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowRight className="w-3.5 h-3.5" />}
+                        <span>複製到手錶 ({selectedLocalTracks.length})</span>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteLocalTracks(selectedLocalTracks)}
+                        className="px-2.5 py-1 bg-red-500/20 hover:bg-red-600 text-red-300 hover:text-white border border-red-500/30 rounded text-xs font-medium flex items-center gap-1.5 transition"
+                        title="將選取歌曲從電腦刪除"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>刪除 ({selectedLocalTracks.length})</span>
+                      </button>
+                    </div>
                   )}
                 </div>
 
-                {/* 歌曲表格列表 */}
-                <div className="flex-1 overflow-y-auto divide-y divide-neutral-800/40">
+                {/* 電腦歌曲樹狀選單列表 (僅一層目錄展開/縮合) */}
+                <div className="flex-1 overflow-y-auto">
                   {loadingLocal ? (
                     <div className="flex flex-col items-center justify-center h-48 text-neutral-500 text-sm gap-2">
                       <Loader2 className="w-5 h-5 animate-spin" />
@@ -770,129 +855,172 @@ export default function App() {
                       </button>
                     </div>
                   ) : (
-                    filteredLocalTracks.map(track => {
-                      const isSelected = selectedLocalTracks.includes(track.id);
-                      // 檢查手錶中是否已存在同名歌曲
-                      const isSyncedOnWatch = watchTracks.some(wt => wt.filename === `${track.title}.mp3` || wt.title === track.title);
+                    // 分組顯示樹狀選單
+                    (() => {
+                      const groups: Record<string, LocalTrack[]> = {};
+                      filteredLocalTracks.forEach(t => {
+                        const folder = t.folder || '音樂';
+                        if (!groups[folder]) groups[folder] = [];
+                        groups[folder].push(t);
+                      });
 
-                      return (
-                        <div
-                          key={track.id}
-                          onClick={() => {
-                            setSelectedLocalTracks(prev =>
-                              isSelected ? prev.filter(id => id !== track.id) : [...prev, track.id]
-                            );
-                          }}
-                          className={`px-4 py-2.5 flex items-center justify-between text-xs hover:bg-neutral-800/50 cursor-pointer transition ${
-                            isSelected ? 'bg-orange-500/10' : ''
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0 pr-3">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedLocalTracks(prev =>
-                                  isSelected ? prev.filter(id => id !== track.id) : [...prev, track.id]
-                                );
-                              }}
-                              className="text-neutral-400 hover:text-white shrink-0"
+                      return Object.entries(groups).map(([folderName, folderTracks]) => {
+                        const isCollapsed = !!collapsedLocalFolders[folderName];
+                        const folderTrackIds = folderTracks.map(t => t.id);
+                        const isFolderAllSelected = folderTrackIds.length > 0 && folderTrackIds.every(id => selectedLocalTracks.includes(id));
+
+                        return (
+                          <div key={folderName} className="border-b border-neutral-800/50 last:border-b-0">
+                            {/* 目錄標題節點 */}
+                            <div 
+                              onClick={() => setCollapsedLocalFolders(prev => ({ ...prev, [folderName]: !prev[folderName] }))}
+                              className="px-3.5 py-2 bg-neutral-900/60 hover:bg-neutral-800/60 flex items-center justify-between cursor-pointer transition select-none"
                             >
-                              {isSelected ? (
-                                <CheckSquare className="w-4 h-4 text-orange-500" />
-                              ) : (
-                                <Square className="w-4 h-4 text-neutral-600" />
-                              )}
-                            </button>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (isFolderAllSelected) {
+                                      setSelectedLocalTracks(prev => prev.filter(id => !folderTrackIds.includes(id)));
+                                    } else {
+                                      setSelectedLocalTracks(prev => Array.from(new Set([...prev, ...folderTrackIds])));
+                                    }
+                                  }}
+                                  className="text-neutral-400 hover:text-white"
+                                  title="勾選整目錄歌曲"
+                                >
+                                  {isFolderAllSelected ? (
+                                    <CheckSquare className="w-3.5 h-3.5 text-orange-500" />
+                                  ) : (
+                                    <Square className="w-3.5 h-3.5 text-neutral-600" />
+                                  )}
+                                </button>
+                                {isCollapsed ? (
+                                  <ChevronRight className="w-4 h-4 text-neutral-500" />
+                                ) : (
+                                  <ChevronDown className="w-4 h-4 text-orange-400" />
+                                )}
+                                <Folder className="w-4 h-4 text-amber-500/80" />
+                                <span className="font-semibold text-xs text-neutral-200">{folderName}</span>
+                                <span className="text-[11px] text-neutral-500">({folderTracks.length})</span>
+                              </div>
 
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handlePlayAudio(track.id);
-                              }}
-                              className="w-6 h-6 rounded-full bg-neutral-800 hover:bg-orange-600 text-neutral-300 hover:text-white flex items-center justify-center shrink-0 transition"
-                            >
-                              {playingTrackId === track.id && isPlaying ? (
-                                <Pause className="w-3 h-3" />
-                              ) : (
-                                <Play className="w-3 h-3 ml-0.5" />
-                              )}
-                            </button>
-
-                            <div className="min-w-0">
-                              <p className={`font-medium truncate ${isSelected ? 'text-orange-300' : 'text-neutral-200'}`}>
-                                {track.title}
-                              </p>
-                              <p className="text-[11px] text-neutral-500 truncate">
-                                {track.artist} · <span className="text-neutral-400">📁 {track.folder}</span>
-                              </p>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-neutral-500">
+                                  {isCollapsed ? '點擊展開' : '點擊收合'}
+                                </span>
+                              </div>
                             </div>
-                          </div>
 
-                          <div className="flex items-center gap-3 shrink-0 text-neutral-400 text-[11px]">
-                            {isSyncedOnWatch ? (
-                              <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                                手錶已存
-                              </span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded text-[10px] bg-neutral-800 text-neutral-500">
-                                未同步
-                              </span>
+                            {/* 目錄下的歌曲清單 (縮合時隱藏) */}
+                            {!isCollapsed && (
+                              <div className="divide-y divide-neutral-850/60 bg-neutral-950/30 pl-2">
+                                {folderTracks.map(track => {
+                                  const isSelected = selectedLocalTracks.includes(track.id);
+                                  const isSyncedOnWatch = watchTracks.some(wt => wt.filename === `${track.title}.mp3` || wt.title === track.title);
+
+                                  return (
+                                    <div
+                                      key={track.id}
+                                      onClick={() => {
+                                        setSelectedLocalTracks(prev =>
+                                          isSelected ? prev.filter(id => id !== track.id) : [...prev, track.id]
+                                        );
+                                      }}
+                                      className={`px-3.5 py-2 flex items-center justify-between text-xs hover:bg-neutral-800/40 cursor-pointer transition ${
+                                        isSelected ? 'bg-orange-500/10' : ''
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedLocalTracks(prev =>
+                                              isSelected ? prev.filter(id => id !== track.id) : [...prev, track.id]
+                                            );
+                                          }}
+                                          className="text-neutral-400 hover:text-white shrink-0"
+                                        >
+                                          {isSelected ? (
+                                            <CheckSquare className="w-3.5 h-3.5 text-orange-500" />
+                                          ) : (
+                                            <Square className="w-3.5 h-3.5 text-neutral-600" />
+                                          )}
+                                        </button>
+
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handlePlayAudio(track.id);
+                                          }}
+                                          className="w-6 h-6 rounded-full bg-neutral-800 hover:bg-orange-600 text-neutral-300 hover:text-white flex items-center justify-center shrink-0 transition"
+                                          title={playingTrackId === track.id && isPlaying ? "暫停" : "試聽"}
+                                        >
+                                          {playingTrackId === track.id && isPlaying ? (
+                                            <Pause className="w-3 h-3" />
+                                          ) : (
+                                            <Play className="w-3 h-3 ml-0.5" />
+                                          )}
+                                        </button>
+
+                                        <div className="min-w-0">
+                                          <p className={`font-medium truncate ${isSelected ? 'text-orange-300' : 'text-neutral-200'}`}>
+                                            {track.title}
+                                          </p>
+                                          <p className="text-[11px] text-neutral-500 truncate">
+                                            {track.artist}
+                                          </p>
+                                        </div>
+                                      </div>
+
+                                      {/* 單曲獨立操作按鈕：複製到手錶 / 刪除 */}
+                                      <div className="flex items-center gap-2 shrink-0 text-neutral-400 text-[11px]">
+                                        {isSyncedOnWatch ? (
+                                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                            手錶已存
+                                          </span>
+                                        ) : (
+                                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-neutral-800 text-neutral-500">
+                                            未同步
+                                          </span>
+                                        )}
+                                        <span className="w-12 text-right">{(track.size / (1024 * 1024)).toFixed(1)} MB</span>
+
+                                        <div className="flex items-center gap-1 pl-1">
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleSyncSpecificTracksToWatch([track.id]);
+                                            }}
+                                            disabled={syncingToWatch || !watchStatus.connected}
+                                            className="px-2 py-1 rounded bg-neutral-800 hover:bg-orange-600 text-neutral-300 hover:text-white disabled:opacity-40 transition text-[10px] flex items-center gap-1"
+                                            title="單曲複製到手錶"
+                                          >
+                                            <ArrowRight className="w-3 h-3" />
+                                            <span>複製</span>
+                                          </button>
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleDeleteLocalTracks([track.id]);
+                                            }}
+                                            className="p-1 rounded bg-neutral-800 hover:bg-red-600 text-neutral-400 hover:text-white transition"
+                                            title="從電腦刪除"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             )}
-                            <span className="w-12 text-right">{(track.size / (1024 * 1024)).toFixed(1)} MB</span>
                           </div>
-                        </div>
-                      );
-                    })
+                        );
+                      });
+                    })()
                   )}
-                </div>
-              </div>
-
-              {/* === 中間傳輸控制軸 (Sync Control Column) === */}
-              <div className="flex flex-col items-center justify-center gap-4 py-8">
-                
-                {/* 複製到手錶按鈕 */}
-                <button
-                  disabled={selectedLocalTracks.length === 0 || syncingToWatch || !watchStatus.connected}
-                  onClick={handleSyncToWatch}
-                  className={`w-16 h-16 rounded-2xl flex flex-col items-center justify-center gap-1 shadow-xl transition-all ${
-                    selectedLocalTracks.length > 0 && watchStatus.connected && !syncingToWatch
-                      ? 'bg-gradient-to-br from-orange-500 to-amber-600 hover:scale-105 active:scale-95 text-white shadow-orange-950/50 cursor-pointer'
-                      : 'bg-neutral-800 text-neutral-600 cursor-not-allowed opacity-50'
-                  }`}
-                  title="將選取歌曲複製到手錶"
-                >
-                  {syncingToWatch ? (
-                    <Loader2 className="w-6 h-6 animate-spin text-white" />
-                  ) : (
-                    <>
-                      <ArrowRight className="w-5 h-5" />
-                      <span className="text-[10px] font-bold tracking-tight">複製 ➔</span>
-                    </>
-                  )}
-                </button>
-
-                {/* 從手錶移除按鈕 */}
-                <button
-                  disabled={selectedWatchTracks.length === 0 || deletingFromWatch || !watchStatus.connected}
-                  onClick={handleDeleteFromWatch}
-                  className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all ${
-                    selectedWatchTracks.length > 0 && watchStatus.connected && !deletingFromWatch
-                      ? 'bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/20 cursor-pointer active:scale-95'
-                      : 'bg-neutral-900 text-neutral-700 border border-neutral-800 cursor-not-allowed opacity-40'
-                  }`}
-                  title="從手錶移除選取歌曲"
-                >
-                  {deletingFromWatch ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="w-4 h-4" />
-                  )}
-                </button>
-
-                <div className="text-center text-[10px] text-neutral-500 px-1">
-                  <span>USB 高速寫入</span>
-                  <br />
-                  <span>自動建清單</span>
                 </div>
               </div>
 
@@ -932,49 +1060,64 @@ export default function App() {
                         className="w-full bg-neutral-800 border border-neutral-700 text-neutral-200 text-xs rounded-lg pl-8 pr-2.5 py-1.5 focus:outline-none focus:border-orange-500"
                       />
                     </div>
+
+                    <button
+                      onClick={fetchWatchTracks}
+                      className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white transition"
+                      title="重新整理手錶清單"
+                    >
+                      <RotateCw className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
 
-                {/* 全選控制列 */}
+                {/* 全選與多選操作工具列 */}
                 <div className="px-4 py-2 bg-neutral-900/40 border-b border-neutral-800/80 flex items-center justify-between text-xs text-neutral-400">
-                  <button
-                    disabled={!watchStatus.connected}
-                    onClick={() => {
-                      if (selectedWatchTracks.length === filteredWatchTracks.length) {
-                        setSelectedWatchTracks([]);
-                      } else {
-                        setSelectedWatchTracks(filteredWatchTracks.map(t => t.rel_path));
-                      }
-                    }}
-                    className="flex items-center gap-2 hover:text-white transition disabled:opacity-40"
-                  >
-                    {selectedWatchTracks.length > 0 && selectedWatchTracks.length === filteredWatchTracks.length ? (
-                      <CheckSquare className="w-4 h-4 text-orange-500" />
-                    ) : (
-                      <Square className="w-4 h-4 text-neutral-500" />
-                    )}
-                    <span>全選 ({selectedWatchTracks.length}/{filteredWatchTracks.length})</span>
-                  </button>
-
                   <div className="flex items-center gap-3">
+                    <button
+                      disabled={!watchStatus.connected}
+                      onClick={() => {
+                        if (selectedWatchTracks.length === filteredWatchTracks.length) {
+                          setSelectedWatchTracks([]);
+                        } else {
+                          setSelectedWatchTracks(filteredWatchTracks.map(t => t.rel_path));
+                        }
+                      }}
+                      className="flex items-center gap-2 hover:text-white transition disabled:opacity-40"
+                    >
+                      {selectedWatchTracks.length > 0 && selectedWatchTracks.length === filteredWatchTracks.length ? (
+                        <CheckSquare className="w-4 h-4 text-orange-500" />
+                      ) : (
+                        <Square className="w-4 h-4 text-neutral-500" />
+                      )}
+                      <span>全選 ({selectedWatchTracks.length}/{filteredWatchTracks.length})</span>
+                    </button>
+
                     {watchPlaylists.length > 0 && (
                       <span className="text-[11px] text-neutral-500">
                         {watchPlaylists.length} 個手錶播放清單 (.m3u8)
                       </span>
                     )}
-                    <button
-                      onClick={fetchWatchTracks}
-                      className="hover:text-white transition flex items-center gap-1 text-[11px]"
-                      title="重新整理手錶清單"
-                    >
-                      <RotateCw className="w-3 h-3" />
-                      <span>重新整理</span>
-                    </button>
                   </div>
+
+                  {/* 手錶多選批量刪除按鍵 */}
+                  {selectedWatchTracks.length > 0 && (
+                    <div className="flex items-center gap-2 animate-fadeIn">
+                      <button
+                        disabled={deletingFromWatch || !watchStatus.connected}
+                        onClick={() => handleDeleteSpecificWatchTracks(selectedWatchTracks)}
+                        className="px-2.5 py-1 bg-red-500/20 hover:bg-red-600 text-red-300 hover:text-white border border-red-500/30 rounded text-xs font-medium flex items-center gap-1.5 transition"
+                        title="將選取歌曲從手錶刪除"
+                      >
+                        {deletingFromWatch ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                        <span>從手錶刪除 ({selectedWatchTracks.length})</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
 
-                {/* 手錶歌曲列表 */}
-                <div className="flex-1 overflow-y-auto divide-y divide-neutral-800/40">
+                {/* 手錶歌曲樹狀選單列表 (僅一層目錄展開/縮合) */}
+                <div className="flex-1 overflow-y-auto">
                   {!watchStatus.connected ? (
                     <div className="flex flex-col items-center justify-center h-48 text-neutral-500 text-sm gap-2">
                       <Watch className="w-10 h-10 stroke-1 text-amber-500/60 mb-1" />
@@ -992,57 +1135,136 @@ export default function App() {
                     <div className="flex flex-col items-center justify-center h-48 text-neutral-500 text-sm">
                       <Music2 className="w-8 h-8 stroke-1 mb-2 opacity-40" />
                       <span>手錶內目前沒有歌曲</span>
-                      <span className="text-xs text-neutral-600 mt-1">從左側選取歌曲並點擊「複製 ➔」</span>
+                      <span className="text-xs text-neutral-600 mt-1">從左側選取歌曲並點擊「複製到手錶」</span>
                     </div>
                   ) : (
-                    filteredWatchTracks.map(track => {
-                      const isSelected = selectedWatchTracks.includes(track.rel_path);
+                    // 分組顯示手錶樹狀選單
+                    (() => {
+                      const groups: Record<string, WatchTrack[]> = {};
+                      filteredWatchTracks.forEach(t => {
+                        const folder = t.folder || '音樂';
+                        if (!groups[folder]) groups[folder] = [];
+                        groups[folder].push(t);
+                      });
 
-                      return (
-                        <div
-                          key={track.rel_path}
-                          onClick={() => {
-                            setSelectedWatchTracks(prev =>
-                              isSelected ? prev.filter(p => p !== track.rel_path) : [...prev, track.rel_path]
-                            );
-                          }}
-                          className={`px-4 py-2.5 flex items-center justify-between text-xs hover:bg-neutral-800/50 cursor-pointer transition ${
-                            isSelected ? 'bg-orange-500/10' : ''
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0 pr-3">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedWatchTracks(prev =>
-                                  isSelected ? prev.filter(p => p !== track.rel_path) : [...prev, track.rel_path]
-                                );
-                              }}
-                              className="text-neutral-400 hover:text-white shrink-0"
+                      return Object.entries(groups).map(([folderName, folderTracks]) => {
+                        const isCollapsed = !!collapsedWatchFolders[folderName];
+                        const folderRelPaths = folderTracks.map(t => t.rel_path);
+                        const isFolderAllSelected = folderRelPaths.length > 0 && folderRelPaths.every(p => selectedWatchTracks.includes(p));
+
+                        return (
+                          <div key={folderName} className="border-b border-neutral-800/50 last:border-b-0">
+                            {/* 手錶目錄標題節點 */}
+                            <div 
+                              onClick={() => setCollapsedWatchFolders(prev => ({ ...prev, [folderName]: !prev[folderName] }))}
+                              className="px-3.5 py-2 bg-neutral-900/60 hover:bg-neutral-800/60 flex items-center justify-between cursor-pointer transition select-none"
                             >
-                              {isSelected ? (
-                                <CheckSquare className="w-4 h-4 text-orange-500" />
-                              ) : (
-                                <Square className="w-4 h-4 text-neutral-600" />
-                              )}
-                            </button>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (isFolderAllSelected) {
+                                      setSelectedWatchTracks(prev => prev.filter(p => !folderRelPaths.includes(p)));
+                                    } else {
+                                      setSelectedWatchTracks(prev => Array.from(new Set([...prev, ...folderRelPaths])));
+                                    }
+                                  }}
+                                  className="text-neutral-400 hover:text-white"
+                                  title="勾選整目錄手錶歌曲"
+                                >
+                                  {isFolderAllSelected ? (
+                                    <CheckSquare className="w-3.5 h-3.5 text-orange-500" />
+                                  ) : (
+                                    <Square className="w-3.5 h-3.5 text-neutral-600" />
+                                  )}
+                                </button>
+                                {isCollapsed ? (
+                                  <ChevronRight className="w-4 h-4 text-neutral-500" />
+                                ) : (
+                                  <ChevronDown className="w-4 h-4 text-orange-400" />
+                                )}
+                                <Folder className="w-4 h-4 text-amber-500/80" />
+                                <span className="font-semibold text-xs text-neutral-200">{folderName}</span>
+                                <span className="text-[11px] text-neutral-500">({folderTracks.length})</span>
+                              </div>
 
-                            <div className="min-w-0">
-                              <p className={`font-medium truncate ${isSelected ? 'text-orange-300' : 'text-neutral-200'}`}>
-                                {track.title}
-                              </p>
-                              <p className="text-[11px] text-neutral-500 truncate">
-                                {track.artist} · <span className="text-neutral-400">📁 {track.folder}</span>
-                              </p>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-neutral-500">
+                                  {isCollapsed ? '點擊展開' : '點擊收合'}
+                                </span>
+                              </div>
                             </div>
-                          </div>
 
-                          <div className="flex items-center gap-3 shrink-0 text-neutral-400 text-[11px]">
-                            <span>{(track.size / (1024 * 1024)).toFixed(1)} MB</span>
+                            {/* 手錶目錄下的歌曲清單 (縮合時隱藏) */}
+                            {!isCollapsed && (
+                              <div className="divide-y divide-neutral-850/60 bg-neutral-950/30 pl-2">
+                                {folderTracks.map(track => {
+                                  const isSelected = selectedWatchTracks.includes(track.rel_path);
+
+                                  return (
+                                    <div
+                                      key={track.rel_path}
+                                      onClick={() => {
+                                        setSelectedWatchTracks(prev =>
+                                          isSelected ? prev.filter(p => p !== track.rel_path) : [...prev, track.rel_path]
+                                        );
+                                      }}
+                                      className={`px-3.5 py-2 flex items-center justify-between text-xs hover:bg-neutral-800/40 cursor-pointer transition ${
+                                        isSelected ? 'bg-orange-500/10' : ''
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedWatchTracks(prev =>
+                                              isSelected ? prev.filter(p => p !== track.rel_path) : [...prev, track.rel_path]
+                                            );
+                                          }}
+                                          className="text-neutral-400 hover:text-white shrink-0"
+                                        >
+                                          {isSelected ? (
+                                            <CheckSquare className="w-3.5 h-3.5 text-orange-500" />
+                                          ) : (
+                                            <Square className="w-3.5 h-3.5 text-neutral-600" />
+                                          )}
+                                        </button>
+
+                                        <div className="min-w-0">
+                                          <p className={`font-medium truncate ${isSelected ? 'text-orange-300' : 'text-neutral-200'}`}>
+                                            {track.title}
+                                          </p>
+                                          <p className="text-[11px] text-neutral-500 truncate">
+                                            {track.artist}
+                                          </p>
+                                        </div>
+                                      </div>
+
+                                      {/* 手錶歌曲單曲操作：只有刪除 */}
+                                      <div className="flex items-center gap-2 shrink-0 text-neutral-400 text-[11px]">
+                                        <span>{(track.size / (1024 * 1024)).toFixed(1)} MB</span>
+
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDeleteSpecificWatchTracks([track.rel_path]);
+                                          }}
+                                          disabled={deletingFromWatch}
+                                          className="p-1 rounded bg-neutral-800 hover:bg-red-600 text-neutral-400 hover:text-white transition"
+                                          title="從手錶刪除"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      );
-                    })
+                        );
+                      });
+                    })()
                   )}
                 </div>
               </div>
@@ -1099,6 +1321,19 @@ export default function App() {
                         <span>開始下載與轉碼</span>
                       </button>
                     </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <input 
+                      type="checkbox" 
+                      id="dlPlaylistCheck" 
+                      checked={downloadPlaylist}
+                      onChange={(e) => setDownloadPlaylist(e.target.checked)}
+                      className="rounded bg-neutral-950 border-neutral-800 text-orange-600 focus:ring-0 cursor-pointer"
+                    />
+                    <label htmlFor="dlPlaylistCheck" className="text-xs text-neutral-300 cursor-pointer">
+                      若為播放清單或整張專輯，下載全部歌曲 (預設僅下載單曲)
+                    </label>
                   </div>
                 </form>
               </div>
@@ -1315,14 +1550,19 @@ export default function App() {
               </button>
             </div>
             <form onSubmit={handleCreateFolder} className="space-y-4">
-              <input
-                type="text"
-                placeholder="例如：重訓音樂、輕鬆跑、Podcast..."
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                autoFocus
-                className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3.5 py-2 text-sm text-neutral-100 focus:outline-none focus:border-orange-500"
-              />
+              <div>
+                <input
+                  type="text"
+                  placeholder="例如：重訓音樂、輕鬆跑、Podcast..."
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  autoFocus
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3.5 py-2 text-sm text-neutral-100 focus:outline-none focus:border-orange-500"
+                />
+                <p className="text-[11px] text-neutral-500 mt-1.5">
+                  提示：目錄結構限定為一層，不可輸入子目錄路徑（/ 或 \）。
+                </p>
+              </div>
               <div className="flex justify-end gap-2">
                 <button
                   type="button"

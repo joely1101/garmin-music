@@ -5,12 +5,12 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
 
-# Collect feedparser, yt_dlp, and uvicorn dependencies
 hidden_imports = [
     'uvicorn',
     'uvicorn.logging',
     'uvicorn.loops',
     'uvicorn.loops.auto',
+    'uvicorn.loops.asyncio',
     'uvicorn.protocols',
     'uvicorn.protocols.http',
     'uvicorn.protocols.http.auto',
@@ -27,9 +27,10 @@ hidden_imports = [
     'mutagen.easyid3',
     'mutagen.mp3',
     'mutagen.id3',
-    'webview',
-    'clr_loader',
-    'pythonnet'
+    'fastapi',
+    'starlette',
+    'pydantic',
+    'sqlite3'
 ] + collect_submodules('uvicorn') + collect_submodules('yt_dlp') + collect_submodules('mutagen')
 
 datas = [
@@ -47,7 +48,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter', 'matplotlib', 'scipy', 'torch', 'torchaudio'],
+    excludes=['tkinter', 'matplotlib', 'scipy', 'torch', 'torchaudio', 'webview', 'clr_loader', 'pythonnet'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -59,29 +60,22 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
     [],
-    exclude_binaries=True,
     name='GarminMusicStudio',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,  # Set to False so no black terminal window appears
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
     icon=None
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name='GarminMusicStudio',
 )
