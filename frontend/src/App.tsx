@@ -26,7 +26,8 @@ import {
   Edit2,
   SkipBack,
   SkipForward,
-  FastForward
+  FastForward,
+  FolderSearch
 } from 'lucide-react';
 
 interface LocalTrack {
@@ -172,6 +173,7 @@ export default function App() {
   // Custom Path Input
   const [customPathInput, setCustomPathInput] = useState('');
   const [detectingWatch, setDetectingWatch] = useState(false);
+  const [browsingFolder, setBrowsingFolder] = useState(false);
 
   // Initial Load
   useEffect(() => {
@@ -443,6 +445,34 @@ export default function App() {
       alert(`偵測失敗: ${e.message}`);
     } finally {
       setDetectingWatch(false);
+    }
+  };
+
+  const handleBrowseWatchFolder = async () => {
+    setBrowsingFolder(true);
+    try {
+      const res = await fetch('/api/watch/browse-folder', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.path) {
+          setCustomPathInput(data.path);
+          // 自動儲存設定
+          await fetch('/api/watch/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: data.path })
+          });
+          await fetchWatchStatus();
+          alert(`已成功選擇手錶目錄：${data.path}`);
+        }
+      } else {
+        const err = await res.json();
+        alert(`選擇目錄失敗: ${err.detail || '未知錯誤'}`);
+      }
+    } catch (e: any) {
+      alert(`選取失敗: ${e.message}`);
+    } finally {
+      setBrowsingFolder(false);
     }
   };
 
@@ -1917,7 +1947,7 @@ export default function App() {
                 <div>
                   <h3 className="text-base font-bold text-white mb-1">手錶音樂磁碟路徑設定</h3>
                   <p className="text-xs text-neutral-400">
-                    可手動輸入手錶音樂資料夾路徑，或點選「自動偵測」讓系統搜尋電腦各磁碟中的手錶/Music目錄結構。
+                    可手動輸入手錶音樂資料夾路徑，或點選「手動選擇目錄」開啟目錄導覽選取，亦可點選「自動偵測」由系統搜尋。
                   </p>
                 </div>
 
@@ -1933,6 +1963,15 @@ export default function App() {
                       onChange={(e) => setCustomPathInput(e.target.value)}
                       className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-3.5 py-2 text-sm text-neutral-100 focus:outline-none focus:border-orange-500 font-mono"
                     />
+                    <button
+                      onClick={handleBrowseWatchFolder}
+                      disabled={browsingFolder}
+                      className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 rounded-lg text-sm font-medium flex items-center gap-1.5 transition shrink-0"
+                      title="開啟 Windows 目錄瀏覽視窗手動選取資料夾"
+                    >
+                      {browsingFolder ? <Loader2 className="w-4 h-4 animate-spin text-orange-400" /> : <FolderSearch className="w-4 h-4 text-orange-400" />}
+                      <span>手動選擇目錄</span>
+                    </button>
                     <button
                       onClick={handleAutoDetectWatch}
                       disabled={detectingWatch}
