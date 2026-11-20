@@ -202,19 +202,10 @@ export default function App() {
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // 視窗關閉時通知後端安全退出（若有下載任務進行中，後端會自動忽略並繼續完成）
-    const handlePageHide = () => {
-      if (navigator.sendBeacon) {
-        navigator.sendBeacon('/api/system/shutdown');
-      }
-    };
-    window.addEventListener('pagehide', handlePageHide);
-
     return () => {
       clearInterval(interval);
       clearInterval(heartbeatInterval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('pagehide', handlePageHide);
     };
   }, []);
 
