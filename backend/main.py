@@ -1148,7 +1148,7 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
         if "music.youtube.com" in clean_url:
             clean_url = clean_url.replace("music.youtube.com", "www.youtube.com")
 
-        if not download_playlist and is_youtube:
+        if not download_playlist and is_youtube and "watch?v=" in clean_url:
             clean_url = re.sub(r'[?&]list=[^&]+', '', clean_url)
 
         DOWNLOAD_TASKS[task_id]["progress"] = "解析媒體資訊中..."
@@ -1177,7 +1177,7 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
             'outtmpl': str(target_dir / '%(title)s.%(ext)s'),
             'progress_hooks': [progress_hook],
             'noplaylist': not download_playlist,
-            'ignoreerrors': True,
+            'ignoreerrors': 'only_download' if download_playlist else False,
             'retries': 10,
             'fragment_retries': 10,
             'file_access_retries': 5,
@@ -1193,9 +1193,14 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(clean_url, download=True)
-            if info:
+            if not info:
+                raise Exception("無法從該網址取得音訊內容，請確認影片或播放清單是否為公開狀態")
+            if 'entries' in info and info.get('entries'):
+                first = next((e for e in info['entries'] if e), None)
+                title = info.get('title') or (first.get('title') if first else 'YouTube Playlist')
+            else:
                 title = info.get('title', 'YouTube Audio')
-                DOWNLOAD_TASKS[task_id]["title"] = title
+            DOWNLOAD_TASKS[task_id]["title"] = title
             
         scan_and_sync_files()
         DOWNLOAD_TASKS[task_id]["status"] = "completed"
