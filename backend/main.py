@@ -1024,7 +1024,30 @@ class DirectAudioDownloadRequest(BaseModel):
     artist: str = "Podcast"
     target_folder: str = "音樂"
 
+def get_ffmpeg_dir() -> Optional[str]:
+    """取得內建或本機的 FFmpeg 執行檔目錄"""
+    if getattr(sys, 'frozen', False):
+        p = Path(sys._MEIPASS) / "bin"
+        if (p / "ffmpeg.exe").exists():
+            return str(p)
+        p = Path(sys.executable).resolve().parent / "bin"
+        if (p / "ffmpeg.exe").exists():
+            return str(p)
+    p = Path(__file__).resolve().parent.parent / "bin"
+    if (p / "ffmpeg.exe").exists():
+        return str(p)
+    return None
+
+def has_active_download_tasks() -> bool:
+    """檢查是否有正在進行或排隊中的下載任務"""
+    for t in DOWNLOAD_TASKS.values():
+        if t.get("status") in ("processing", "queued"):
+            return True
+    return False
+
 def run_download_task(task_id: str, url: str, target_folder: str = "音樂", download_playlist: bool = False, custom_title: Optional[str] = None, custom_artist: Optional[str] = None, current_user: str = "admin"):
+    global last_heartbeat_time
+    last_heartbeat_time = time.time()
     display_title = custom_title or url
     DOWNLOAD_TASKS[task_id] = {"status": "processing", "progress": "Starting...", "title": display_title, "url": url, "user": current_user, "error": None}
     
@@ -1055,7 +1078,12 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
             
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=60) as resp, open(target_file, "wb") as f:
-                shutil.copyfileobj(resp, f)
+                while True:
+                    chunk = resp.read(64 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    last_heartbeat_time = time.time()
                 
             scan_and_sync_files()
             DOWNLOAD_TASKS[task_id]["status"] = "completed"
@@ -1087,7 +1115,12 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
             
             req = urllib.request.Request(audio_url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=60) as resp, open(target_file, "wb") as f:
-                shutil.copyfileobj(resp, f)
+                while True:
+                    chunk = resp.read(64 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    last_heartbeat_time = time.time()
             
             scan_and_sync_files()
             DOWNLOAD_TASKS[task_id]["status"] = "completed"
@@ -1102,6 +1135,8 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
         DOWNLOAD_TASKS[task_id]["progress"] = "Extracting media info..."
         
         def progress_hook(d):
+            global last_heartbeat_time
+            last_heartbeat_time = time.time()
             if d['status'] == 'downloading':
                 pct = d.get('_percent_str', '0%')
                 filename = Path(d.get('filename', '')).name
@@ -1109,6 +1144,7 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
             elif d['status'] == 'finished':
                 DOWNLOAD_TASKS[task_id]["progress"] = "Converting audio to MP3 (192k)..."
 
+        ffmpeg_dir = get_ffmpeg_dir()
         ydl_opts = {
             'format': 'bestaudio/best',
             'postprocessors': [{
@@ -1129,7 +1165,12 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
             'socket_timeout': 30,
             'quiet': True,
             'no_warnings': True,
+            'windowsfilenames': True,
+            'nocheckcertificate': True,
+            'geo_bypass': True,
         }
+        if ffmpeg_dir:
+            ydl_opts['ffmpeg_location'] = ffmpeg_dir
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(clean_url, download=True)
@@ -2067,6 +2108,18 @@ def client_heartbeat():
     global last_heartbeat_time
     last_heartbeat_time = time.time()
     return {"status": "ok"}
+
+@app.post("/api/system/shutdown")
+def shutdown_system():
+    """前端視窗關閉時請求安全退出（若有下載任務進行中則不退出）"""
+    if has_active_download_tasks():
+        return {"status": "ignored", "reason": "download_in_progress"}
+    import threading
+    def _exit():
+        time.sleep(0.5)
+        os._exit(0)
+    threading.Thread(target=_exit, daemon=True).start()
+    return {"status": "shutting_down"}
 
 # ----------------- Serve Frontend Static Files -----------------
 if FRONTEND_DIST.exists():

@@ -186,16 +186,35 @@ export default function App() {
     fetchWatchStatus();
     const interval = setInterval(fetchDownloadTasks, 2500);
 
-    // 每 3 秒發送一次心跳給後端，前端分頁/視窗關閉後後端能自動退出釋放目錄
+    // 每 3 秒發送一次心跳給後端，保持伺服器運行
     const sendHeartbeat = () => {
       fetch('/api/system/heartbeat', { method: 'POST' }).catch(() => {});
     };
     sendHeartbeat();
     const heartbeatInterval = setInterval(sendHeartbeat, 3000);
 
+    // 當分頁/視窗從背景切換回前景時，立刻發送心跳並刷新下載任務
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        sendHeartbeat();
+        fetchDownloadTasks();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // 視窗關閉時通知後端安全退出（若有下載任務進行中，後端會自動忽略並繼續完成）
+    const handlePageHide = () => {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('/api/system/shutdown');
+      }
+    };
+    window.addEventListener('pagehide', handlePageHide);
+
     return () => {
       clearInterval(interval);
       clearInterval(heartbeatInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
     };
   }, []);
 

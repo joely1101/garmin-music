@@ -120,16 +120,24 @@ def main():
     # Automatically launch UI window
     ui_proc = open_ui(server_url)
 
-    # Monitor heartbeat: auto exit when browser window is closed (no heartbeats for 8 seconds)
-    # Give user 20 seconds grace period on initial launch
-    grace_period_end = time.time() + 20.0
+    # Monitor heartbeat: auto exit when browser window is closed.
+    # 1. Never exit while active download tasks are running.
+    # 2. Allow 60 seconds grace period on initial launch.
+    # 3. Allow 120 seconds of silence before exiting to accommodate background tab throttling.
+    grace_period_end = time.time() + 60.0
     try:
         while True:
             time.sleep(2)
             now = time.time()
+
+            # If download tasks are running, continuously renew heartbeat so server NEVER terminates
+            if hasattr(bmain, "has_active_download_tasks") and bmain.has_active_download_tasks():
+                bmain.last_heartbeat_time = now
+                continue
+
             if now > grace_period_end:
-                # If no heartbeat received from the frontend for over 8 seconds, exit
-                if now - bmain.last_heartbeat_time > 8.0:
+                # If no heartbeat received from frontend for over 120 seconds and no downloads, exit
+                if now - bmain.last_heartbeat_time > 120.0:
                     break
     except (KeyboardInterrupt, SystemExit):
         pass
