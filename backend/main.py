@@ -1334,65 +1334,193 @@ def get_watch_status(current_user: str = Depends(get_current_user_from_req)):
 
 @app.post("/api/watch/config")
 def set_watch_config(cfg: WatchDriveConfig, current_user: str = Depends(get_current_user_from_req)):
-    """手動設定手錶音樂資料夾路徑"""
-    p = Path(cfg.path.strip())
-    if not p.exists():
-        raise HTTPException(status_code=400, detail="指定的資料夾不存在")
+    r"""手動設定手錶音樂資料夾路徑，支援標準路徑與 MTP (mtp:\...) 裝置路徑"""
+    raw_path = cfg.path.strip()
+    if raw_path.startswith("mtp:\\") or raw_path.startswith("mtp:/"):
+        saved_path = raw_path
+    else:
+        p = Path(raw_path)
+        if not p.exists():
+            raise HTTPException(status_code=400, detail="指定的資料夾不存在")
+        saved_path = str(p.resolve())
+
     with get_db() as conn:
-        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('watch_mount_path', ?)", (str(p.resolve()),))
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('watch_mount_path', ?)", (saved_path,))
         conn.commit()
-    return {"status": "ok", "path": str(p.resolve())}
+    return {"status": "ok", "path": saved_path}
 
-@app.post("/api/watch/browse-folder")
-def browse_watch_folder(current_user: str = Depends(get_current_user_from_req)):
-    """彈出 Windows 原生資料夾選擇視窗讓使用者選取目錄（使用 Windows Shell COM 原生置頂）"""
-    selected = ""
-    if sys.platform == "win32":
-        fd, vbs_path = tempfile.mkstemp(suffix=".vbs")
+def get_mtp_helper_path() -> Path:
+    """取得 MTP 裝置輔助腳本路徑"""
+    if getattr(sys, 'frozen', False):
+        p = Path(sys._MEIPASS) / "backend" / "mtp_helper.ps1"
+        if p.exists():
+            return p
+        p = Path(sys.executable).resolve().parent / "backend" / "mtp_helper.ps1"
+        if p.exists():
+            return p
+    return Path(__file__).resolve().parent / "mtp_helper.ps1"
+
+def call_mtp_helper(action: str, device_name: str = "", sub_path: str = "", source_file: str = "", file_name: str = "", timeout: int = 10) -> Optional[Any]:
+    """安全呼叫 mtp_helper.ps1 並解析 JSON，防止 CP950/UTF-8 編碼異常與超時"""
+    script = get_mtp_helper_path()
+    if not script.exists():
+        print(f"[MTP ERROR] 找不到輔助腳本: {script}")
+        return None
+    try:
+        import subprocess, json
+        cmd = [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-File", str(script),
+            "-Action", action,
+            "-DeviceName", device_name,
+            "-SubPath", sub_path,
+            "-SourceFile", source_file,
+            "-FileName", file_name
+        ]
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        res = subprocess.run(cmd, capture_output=True, text=False, timeout=timeout, creationflags=flags)
         try:
-            vbs_script = '''Option Explicit
-Dim objShell, objFolder
-Set objShell = CreateObject("Shell.Application")
-' 0: hWnd, title, &H0040: BIF_NEWDIALOGSTYLE, 17: ssfDRIVES (本機)
-Set objFolder = objShell.BrowseForFolder(0, "請選取 Garmin 手錶的 Music 資料夾：", &H0040, 17)
-If Not objFolder Is Nothing Then
-    WScript.Echo objFolder.Self.Path
-End If
-'''
-            with os.fdopen(fd, 'w', encoding='ansi') as f:
-                f.write(vbs_script)
+            out = res.stdout.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            out = res.stdout.decode("cp950", errors="replace").strip()
 
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = 0  # SW_HIDE: 完全隱藏主控台黑視窗
-
-            res = subprocess.run(
-                ["cscript.exe", "//nologo", vbs_path],
-                capture_output=True,
-                text=True,
-                encoding="ansi",
-                errors="ignore",
-                startupinfo=si,
-                timeout=300
-            )
-            selected = res.stdout.strip()
-        except subprocess.TimeoutExpired:
-            raise HTTPException(status_code=408, detail="選取目錄逾時，請重新操作。")
-        except Exception as e:
-            print(f"[BROWSE_FOLDER ERROR] {e}")
-            raise HTTPException(status_code=500, detail=f"呼叫資料夾選取器失敗: {str(e)}")
-        finally:
+        if res.returncode == 0 and out:
+            return json.loads(out)
+        else:
             try:
-                if os.path.exists(vbs_path):
-                    os.remove(vbs_path)
-            except Exception:
-                pass
+                err = res.stderr.decode("utf-8").strip()
+            except UnicodeDecodeError:
+                err = res.stderr.decode("cp950", errors="replace").strip()
+            print(f"[MTP ERROR] Action={action} ReturnCode={res.returncode}, STDERR={err}")
+    except Exception as e:
+        print(f"[MTP EXCEPTION] Action={action} failed: {e}")
+    return None
 
-    return {"status": "ok", "path": selected}
+def get_mtp_devices_list() -> List[Dict[str, Any]]:
+    """透過 PowerShell 查詢目前連接中的 MTP / 可攜式裝置 (例如 Garmin 手錶)"""
+    res = call_mtp_helper("list_devices", timeout=8)
+    if isinstance(res, list):
+        return res
+    elif isinstance(res, dict):
+        return [res]
+    return []
+
+@app.get("/api/system/drives")
+def get_system_drives(current_user: str = Depends(get_current_user_from_req)):
+    """列出電腦中所有可用磁碟機（包含實體硬碟、隨身碟與網路磁碟槽）以及連接中的 MTP 可攜式裝置"""
+    drives = []
+    try:
+        import ctypes
+        bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            if bitmask & 1:
+                root = f"{letter}:\\"
+                try:
+                    dtype = ctypes.windll.kernel32.GetDriveTypeW(root)
+                    # 排除 DRIVE_NO_ROOT_DIR (1) 與已離線或無效磁碟槽
+                    if dtype not in (0, 1):
+                        vol_name = ctypes.create_unicode_buffer(1024)
+                        ret = ctypes.windll.kernel32.GetVolumeInformationW(
+                            root, vol_name, ctypes.sizeof(vol_name),
+                            None, None, None, None, 0
+                        )
+                        v_label = vol_name.value.strip() if ret and vol_name.value else ""
+                        if v_label:
+                            label = f"{v_label} ({letter}:)"
+                        else:
+                            label = f"磁碟機 ({letter}:)"
+                        drives.append({
+                            "path": root,
+                            "label": label,
+                            "is_mtp": False
+                        })
+                except Exception:
+                    pass
+            bitmask >>= 1
+    except Exception:
+        import string
+        for letter in string.ascii_uppercase:
+            root = f"{letter}:\\"
+            try:
+                if os.path.exists(root):
+                    drives.append({
+                        "path": root,
+                        "label": f"磁碟機 ({letter}:)",
+                        "is_mtp": False
+                    })
+            except Exception:
+                continue
+
+    # 查詢是否有連接的 MTP / 可攜式裝置（例如 Garmin 手錶）
+    try:
+        mtp_devs = get_mtp_devices_list()
+        for m in mtp_devs:
+            drives.append({
+                "path": m.get("path"),
+                "label": m.get("label", f"{m.get('name')} (MTP 裝置)"),
+                "is_mtp": True
+            })
+    except Exception:
+        pass
+
+    # 確保最基本有系統的 C:\
+    if not drives and os.path.exists("C:\\"):
+        drives.append({"path": "C:\\", "label": "本機磁碟 (C:)", "is_mtp": False})
+
+    return {"drives": drives}
+
+@app.get("/api/system/folders")
+def list_system_subfolders(path: str = Query(...), current_user: str = Depends(get_current_user_from_req)):
+    r"""瀏覽指定路徑底下的子資料夾，支援標準磁碟路徑與 MTP (mtp:\...) 裝置路徑"""
+    if path.startswith("mtp:\\") or path.startswith("mtp:/"):
+        clean = path[5:].replace("/", "\\").strip("\\")
+        parts = clean.split("\\", 1)
+        dev_name = parts[0]
+        sub_path = parts[1] if len(parts) > 1 else ""
+        data = call_mtp_helper("list_folders", device_name=dev_name, sub_path=sub_path, timeout=8)
+        if data and isinstance(data, dict):
+            if "error" in data:
+                raise HTTPException(status_code=400, detail=data["error"])
+            return data
+        raise HTTPException(status_code=400, detail="無法取得 MTP 資料夾內容，請確認手錶螢幕已解鎖並保持 USB 連線")
+
+    try:
+        if not os.path.exists(path) or not os.path.isdir(path):
+            raise HTTPException(status_code=400, detail="路徑不存在或非資料夾")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"路徑無法讀取: {str(e)}")
+
+    subfolders = []
+    try:
+        for item in os.listdir(path):
+            try:
+                full = os.path.join(path, item)
+                if os.path.isdir(full) and not item.startswith('$') and not item.startswith('.'):
+                    subfolders.append({
+                        "name": item,
+                        "path": full
+                    })
+            except Exception:
+                continue
+    except PermissionError:
+        pass
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    subfolders.sort(key=lambda x: x["name"].lower())
+    p = Path(path)
+    parent_path = str(p.parent.resolve()) if p.parent != p and os.path.exists(str(p.parent)) else None
+    return {
+        "current_path": str(Path(path).resolve()),
+        "parent_path": parent_path,
+        "subfolders": subfolders
+    }
 
 @app.get("/api/watch/tracks")
 def get_watch_tracks(watch_path: Optional[str] = None, current_user: str = Depends(get_current_user_from_req)):
-    """掃描手錶內的 MP3 歌曲與播放清單"""
+    r"""掃描手錶內的 MP3 歌曲與播放清單，支援標準磁碟路徑與 MTP (mtp:\...) 裝置"""
     target_str = watch_path
     if not target_str:
         with get_db() as conn:
@@ -1404,7 +1532,44 @@ def get_watch_tracks(watch_path: Optional[str] = None, current_user: str = Depen
             if drives:
                 target_str = drives[0]["path"]
                 
-    if not target_str or not Path(target_str).exists():
+    if not target_str:
+        return {"connected": False, "tracks": [], "playlists": []}
+
+    # 處理 MTP 裝置歌曲掃描
+    if target_str.startswith("mtp:\\") or target_str.startswith("mtp:/"):
+        clean = target_str[5:].replace("/", "\\").strip("\\")
+        parts = clean.split("\\", 1)
+        dev_name = parts[0]
+        sub_path = parts[1] if len(parts) > 1 else ""
+        try:
+            files = call_mtp_helper("list_files", device_name=dev_name, sub_path=sub_path, timeout=10)
+            files = files if isinstance(files, list) else []
+            watch_tracks = []
+            for f in files:
+                fname = f.get("name", "")
+                if fname.lower().endswith(".mp3"):
+                    watch_tracks.append({
+                        "filename": fname,
+                        "title": Path(fname).stem,
+                        "artist": "Garmin Watch",
+                        "duration": 0,
+                        "size": f.get("size", 0),
+                        "folder": "手錶音樂",
+                        "rel_path": fname,
+                        "full_path": f.get("path", f"mtp:\\{dev_name}\\{sub_path}\\{fname}"),
+                        "mtime": 0
+                    })
+            return {
+                "connected": True,
+                "watch_path": target_str,
+                "playlists": [],
+                "tracks": sorted(watch_tracks, key=lambda x: x["title"])
+            }
+        except Exception as e:
+            print(f"[MTP ERROR] 讀取 MTP 歌曲失敗: {e}")
+            return {"connected": False, "tracks": [], "playlists": []}
+
+    if not Path(target_str).exists():
         return {"connected": False, "tracks": [], "playlists": []}
 
     target_dir = Path(target_str)
@@ -1458,7 +1623,7 @@ def get_watch_tracks(watch_path: Optional[str] = None, current_user: str = Depen
 
 @app.post("/api/watch/sync")
 def sync_tracks_to_watch(req: WatchSyncRequest, current_user: str = Depends(get_current_user_from_req)):
-    """將選取的電腦端歌曲複製到手錶磁碟，並更新 M3U8 播放清單"""
+    """將選取的電腦端歌曲複製到手錶磁碟或 MTP 裝置，並更新 M3U8 播放清單"""
     target_str = req.watch_path
     if not target_str:
         with get_db() as conn:
@@ -1470,8 +1635,50 @@ def sync_tracks_to_watch(req: WatchSyncRequest, current_user: str = Depends(get_
             if drives:
                 target_str = drives[0]["path"]
 
-    if not target_str or not Path(target_str).exists():
-        raise HTTPException(status_code=400, detail="未找到 Garmin 手錶音樂磁碟，請確認手錶已以 USB 連線")
+    if not target_str:
+        raise HTTPException(status_code=400, detail="未設定手錶路徑，請確認手錶已連線或手動指定路徑")
+
+    with get_db() as conn:
+        placeholders = ",".join("?" * len(req.track_ids))
+        cur = conn.execute(f"SELECT * FROM tracks WHERE id IN ({placeholders})", (*req.track_ids,))
+        tracks = cur.fetchall()
+
+    if not tracks:
+        raise HTTPException(status_code=400, detail="未選取任何有效歌曲")
+
+    # 處理 MTP 裝置同步
+    if target_str.startswith("mtp:\\") or target_str.startswith("mtp:/"):
+        clean = target_str[5:].replace("/", "\\").strip("\\")
+        parts = clean.split("\\", 1)
+        dev_name = parts[0]
+        sub_path = parts[1] if len(parts) > 1 else ""
+
+        copied = []
+        failed = []
+        for t in tracks:
+            src_file = MUSIC_DIR / t["rel_path"]
+            if not src_file.exists():
+                failed.append({"title": t["title"], "reason": "電腦上原始檔案遺失"})
+                continue
+            data = call_mtp_helper("copy_file", device_name=dev_name, sub_path=sub_path, source_file=str(src_file), timeout=30)
+            if data and data.get("success"):
+                copied.append(t["title"])
+            else:
+                err_msg = data.get("error") if data else "複製失敗"
+                failed.append({"title": t["title"], "reason": err_msg})
+
+        return {
+            "status": "ok",
+            "copied_count": len(copied),
+            "skipped_count": 0,
+            "failed_count": len(failed),
+            "copied": copied,
+            "skipped": [],
+            "failed": failed
+        }
+
+    if not Path(target_str).exists():
+        raise HTTPException(status_code=400, detail="指定的手錶資料夾不存在")
 
     watch_dir = Path(target_str)
     
@@ -1552,7 +1759,25 @@ def delete_tracks_from_watch(req: WatchDeleteRequest, current_user: str = Depend
             if drives:
                 target_str = drives[0]["path"]
 
-    if not target_str or not Path(target_str).exists():
+    if not target_str:
+        raise HTTPException(status_code=400, detail="未設定手錶路徑")
+
+    # MTP 刪除處理
+    if target_str.startswith("mtp:\\") or target_str.startswith("mtp:/"):
+        clean = target_str[5:].replace("/", "\\").strip("\\")
+        parts = clean.split("\\", 1)
+        dev_name = parts[0]
+        sub_path = parts[1] if len(parts) > 1 else ""
+
+        deleted = []
+        for rel in req.rel_paths:
+            fn = Path(rel).name
+            data = call_mtp_helper("delete_file", device_name=dev_name, sub_path=sub_path, file_name=fn, timeout=10)
+            if data and data.get("success"):
+                deleted.append(rel)
+        return {"status": "ok", "deleted": deleted}
+
+    if not Path(target_str).exists():
         raise HTTPException(status_code=400, detail="未找到 Garmin 手錶音樂磁碟")
 
     watch_dir = Path(target_str)

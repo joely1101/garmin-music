@@ -24,3 +24,7 @@ frontend/android/build/
 frontend/android/.idea/
 frontend/android/captures/
 frontend/android/local.properties
+
+# PyInstaller Build artifacts
+build/
+*.spec.bak

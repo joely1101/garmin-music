@@ -170,9 +170,14 @@ export default function App() {
   const [newTitleInput, setNewTitleInput] = useState('');
   const [renaming, setRenaming] = useState(false);
 
-  // Custom Path Input
+  // Custom Path Input & Disk Browser Modal State
   const [customPathInput, setCustomPathInput] = useState('');
-  const [browsingFolder, setBrowsingFolder] = useState(false);
+  const [showDiskBrowserModal, setShowDiskBrowserModal] = useState(false);
+  const [availableDrives, setAvailableDrives] = useState<{ path: string; label: string; is_mtp?: boolean }[]>([]);
+  const [currentBrowserPath, setCurrentBrowserPath] = useState('');
+  const [parentBrowserPath, setParentBrowserPath] = useState<string | null>(null);
+  const [browserSubfolders, setBrowserSubfolders] = useState<{ name: string; path: string }[]>([]);
+  const [loadingBrowser, setLoadingBrowser] = useState(false);
 
   // Initial Load & Heartbeat
   useEffect(() => {
@@ -426,31 +431,64 @@ export default function App() {
     }
   };
 
-  const handleBrowseWatchFolder = async () => {
-    setBrowsingFolder(true);
+  const handleOpenFolderModal = async () => {
+    setShowDiskBrowserModal(true);
+    setLoadingBrowser(true);
     try {
-      const res = await fetch('/api/watch/browse-folder', { method: 'POST' });
+      const res = await fetch('/api/system/drives');
       if (res.ok) {
         const data = await res.json();
-        if (data.path) {
-          setCustomPathInput(data.path);
-          // 自動儲存設定
-          await fetch('/api/watch/config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: data.path })
-          });
-          await fetchWatchStatus();
-          alert(`已成功選擇手錶目錄：${data.path}`);
-        }
+        const drives = data.drives || [];
+        setAvailableDrives(drives);
+        // 若當前有路徑且有效，直接載入該路徑；否則預設載入第一個磁碟槽或 C:\
+        const initPath = customPathInput.trim() || (drives[0]?.path ?? 'C:\\');
+        await loadBrowserPath(initPath);
       } else {
-        const err = await res.json();
-        alert(`選擇目錄失敗: ${err.detail || '未知錯誤'}`);
+        const err = await res.json().catch(() => ({ detail: '無法取得磁碟列表' }));
+        alert(`讀取磁碟槽失敗: ${err.detail || res.statusText}`);
       }
     } catch (e: any) {
-      alert(`選取失敗: ${e.message}`);
+      console.error(e);
+      alert(`載入磁碟機失敗: ${e.message}`);
     } finally {
-      setBrowsingFolder(false);
+      setLoadingBrowser(false);
+    }
+  };
+
+  const loadBrowserPath = async (targetPath: string) => {
+    if (!targetPath) return;
+    setLoadingBrowser(true);
+    try {
+      const res = await fetch(`/api/system/folders?path=${encodeURIComponent(targetPath)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentBrowserPath(data.current_path);
+        setParentBrowserPath(data.parent_path);
+        setBrowserSubfolders(data.subfolders || []);
+      } else {
+        const err = await res.json().catch(() => ({ detail: '無法存取該目錄' }));
+        alert(`無法存取該目錄: ${err.detail || '權限不足或路徑不存在'}`);
+      }
+    } catch (e: any) {
+      alert(`讀取目錄失敗: ${e.message}`);
+    } finally {
+      setLoadingBrowser(false);
+    }
+  };
+
+  const handleSelectFolderModal = async (path: string) => {
+    setCustomPathInput(path);
+    setShowDiskBrowserModal(false);
+    try {
+      await fetch('/api/watch/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path })
+      });
+      await fetchWatchStatus();
+      alert(`已成功選擇手錶目錄：${path}`);
+    } catch (e: any) {
+      alert(`套用失敗: ${e.message}`);
     }
   };
 
@@ -1942,12 +1980,11 @@ export default function App() {
                       className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-3.5 py-2 text-sm text-neutral-100 focus:outline-none focus:border-orange-500 font-mono"
                     />
                     <button
-                      onClick={handleBrowseWatchFolder}
-                      disabled={browsingFolder}
+                      onClick={handleOpenFolderModal}
                       className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 rounded-lg text-sm font-medium flex items-center gap-1.5 transition shrink-0"
-                      title="開啟 Windows 目錄瀏覽視窗手動選取資料夾"
+                      title="開啟目錄瀏覽視窗手動選取資料夾"
                     >
-                      {browsingFolder ? <Loader2 className="w-4 h-4 animate-spin text-orange-400" /> : <FolderSearch className="w-4 h-4 text-orange-400" />}
+                      <FolderSearch className="w-4 h-4 text-orange-400" />
                       <span>手動選擇目錄</span>
                     </button>
                     <button
@@ -2118,6 +2155,151 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 瀏覽磁碟目錄彈窗 (Web 原生導覽器，100% 穩定零卡頓) */}
+      {showDiskBrowserModal && (
+        <div className="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 max-w-xl w-full flex flex-col max-h-[85vh] shadow-2xl space-y-4">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+              <div className="flex items-center gap-2">
+                <FolderSearch className="w-5 h-5 text-orange-500" />
+                <h3 className="text-base font-bold text-white">選取手錶音樂資料夾</h3>
+              </div>
+              <button 
+                onClick={() => setShowDiskBrowserModal(false)} 
+                className="text-neutral-400 hover:text-white transition p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* 磁碟機 / MTP 裝置快捷選單 */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-neutral-400 font-medium shrink-0">切換磁碟 / 裝置：</span>
+              {availableDrives.map((d) => (
+                <button
+                  key={d.path}
+                  onClick={() => loadBrowserPath(d.path)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition flex items-center gap-1.5 ${
+                    currentBrowserPath.startsWith(d.path)
+                      ? 'bg-orange-600/20 border-orange-500 text-orange-300'
+                      : 'bg-neutral-800/80 border-neutral-700/80 text-neutral-300 hover:bg-neutral-700'
+                  }`}
+                >
+                  {d.is_mtp ? (
+                    <Watch className="w-3.5 h-3.5 text-orange-400" />
+                  ) : (
+                    <HardDrive className="w-3.5 h-3.5" />
+                  )}
+                  <span>{d.label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* 目前路徑展示與直接輸入 */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={currentBrowserPath}
+                onChange={(e) => setCurrentBrowserPath(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    loadBrowserPath(currentBrowserPath);
+                  }
+                }}
+                className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 text-xs font-mono text-neutral-200 focus:outline-none focus:border-orange-500"
+                placeholder="目前路徑（可直接修改或按 Enter 前往）"
+              />
+              <button
+                type="button"
+                onClick={() => loadBrowserPath(currentBrowserPath)}
+                className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 rounded-lg text-xs font-medium transition shrink-0"
+              >
+                前往
+              </button>
+            </div>
+
+            {/* 資料夾瀏覽列表 */}
+            <div className="flex-1 overflow-y-auto border border-neutral-800 rounded-xl bg-neutral-950/60 p-2 min-h-[260px] space-y-1">
+              {loadingBrowser ? (
+                <div className="h-full flex items-center justify-center py-16 text-neutral-500 gap-2">
+                  <Loader2 className="w-5 h-5 animate-spin text-orange-500" />
+                  <span className="text-xs">讀取目錄中...</span>
+                </div>
+              ) : (
+                <>
+                  {/* 上一層目錄 */}
+                  {parentBrowserPath && (
+                    <button
+                      onClick={() => loadBrowserPath(parentBrowserPath)}
+                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-neutral-800 text-xs text-neutral-400 flex items-center gap-2 transition"
+                    >
+                      <ChevronRight className="w-4 h-4 rotate-180 text-neutral-500" />
+                      <span>.. 返回上一層目錄</span>
+                    </button>
+                  )}
+
+                  {/* 子資料夾清單 */}
+                  {browserSubfolders.length === 0 ? (
+                    <div className="py-12 text-center text-xs text-neutral-600">
+                      此資料夾內沒有其他子資料夾
+                    </div>
+                  ) : (
+                    browserSubfolders.map((folder) => {
+                      const isMusic = folder.name.toLowerCase() === 'music' || folder.name.toLowerCase() === 'garmin';
+                      return (
+                        <div
+                          key={folder.path}
+                          className="flex items-center justify-between group px-3 py-2 rounded-lg hover:bg-neutral-800/80 transition"
+                        >
+                          <button
+                            onClick={() => loadBrowserPath(folder.path)}
+                            className="flex items-center gap-2 text-left flex-1 truncate text-xs text-neutral-200 group-hover:text-white"
+                          >
+                            <Folder className={`w-4 h-4 shrink-0 ${isMusic ? 'text-orange-400' : 'text-neutral-400'}`} />
+                            <span className="truncate">{folder.name}</span>
+                          </button>
+                          <button
+                            onClick={() => handleSelectFolderModal(folder.path)}
+                            className="opacity-0 group-hover:opacity-100 px-3 py-1 bg-orange-600/80 hover:bg-orange-500 text-white rounded text-xs transition shrink-0 ml-2"
+                          >
+                            選取此資料夾
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="flex items-center justify-between pt-2 border-t border-neutral-800">
+              <span className="text-[11px] text-neutral-500">
+                點擊資料夾名稱可進入子目錄，點右側按鍵或下方按鍵套用。
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowDiskBrowserModal(false)}
+                  className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg text-xs font-medium transition"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectFolderModal(currentBrowserPath)}
+                  disabled={!currentBrowserPath}
+                  className="px-5 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-xs font-medium transition"
+                >
+                  選取目前目錄
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -120,19 +120,16 @@ def main():
     # Automatically launch UI window
     ui_proc = open_ui(server_url)
 
-    # Monitor UI process and heartbeat: auto exit when browser window is closed
-    grace_period_end = time.time() + 15.0  # Give user 15 seconds to load first page
+    # Monitor heartbeat: auto exit when browser window is closed (no heartbeats for 8 seconds)
+    # Give user 20 seconds grace period on initial launch
+    grace_period_end = time.time() + 20.0
     try:
         while True:
-            time.sleep(1)
-            # 1. If Edge app process terminated, shut down immediately
-            if ui_proc is not None and ui_proc.poll() is not None:
-                break
-
-            # 2. Heartbeat check: if web UI hasn't sent heartbeat for > 6 seconds after grace period
+            time.sleep(2)
             now = time.time()
             if now > grace_period_end:
-                if now - bmain.last_heartbeat_time > 6.0:
+                # If no heartbeat received from the frontend for over 8 seconds, exit
+                if now - bmain.last_heartbeat_time > 8.0:
                     break
     except (KeyboardInterrupt, SystemExit):
         pass

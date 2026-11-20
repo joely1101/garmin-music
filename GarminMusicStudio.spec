@@ -35,6 +35,7 @@ hidden_imports = [
 
 datas = [
     ('frontend/dist', 'frontend/dist'),
+    ('backend/mtp_helper.ps1', 'backend'),
     ('bin/ffmpeg.exe', 'bin'),
     ('bin/ffprobe.exe', 'bin'),
 ] + collect_data_files('yt_dlp') + collect_data_files('mutagen')
