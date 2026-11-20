@@ -1,148 +1,103 @@
-# 🎵 Garmin Music Server & Mobile Web Suite
+# ⌚ Garmin Music Studio (Windows 桌面離線專用版)
 
-一個專為 **Garmin 手錶（相容 Subsonic / Navidrome API）** 量身打造的現代化音樂串流、下載與管理伺服器。內建專為手機操作優化的極簡響應式 Web GUI，並支援一鍵下載 YouTube Music 與 Podcast RSS 轉為手錶最佳化 192k MP3 離線存入手錶。
+專為 **Windows 使用者與 Garmin 智慧手錶跑者/運動愛好者** 設計的本機桌面音樂管理工具。
+無需在電腦上安裝 Python 或 Node.js，下載免安裝綠色執行檔即可直接開箱使用！
 
----
-
-## ✨ 核心特色
-
-1. **相容 Subsonic / Navidrome API (`/rest/*`)**：
-   * 完美支援 Garmin 手錶端開源 App（如 [YuMusic Garmin Music App](https://github.com/isyuricunha/yumusic-garmin-music-app)）。
-   * 內建符合 Garmin Connect IQ 要求的高相容 HTTP 回應標頭（`Content-Length`、`audio/mpeg`）。
-2. **目錄分層管理與單曲手錶同步控制**：
-   * **目錄模式**：檔案依資料夾分類（如 `音樂`），支援單一資料夾快速全選/取消手錶同步。
-   * **歌單模式**：平鋪瀏覽全庫歌曲。
-   * **手錶歌單**：獨立分頁僅列出有勾選推送到手錶的曲目，手錶容量一目了然。
-3. **YouTube Music & Podcast 轉 MP3 下載器**：
-   * 支援輸入 YouTube / YouTube Music 網址（可選擇下載整張合輯或僅當前單曲）。
-   * 支援輸入 Podcast RSS 訂閱連結自動抓取最新單集音訊。
-   * 背景透過 `yt-dlp` 與 `ffmpeg` 自動轉碼為標準 192kbps MP3。
-4. **手機導向 (Mobile-First) 現代極簡 GUI**：
-   * 底部導航欄與浮動音樂迷你播放器，手機瀏覽器體驗如原生 App。
-   * 支援打包為原生 Android APK（透過 Capacitor）。
-5. **使用者認證與密碼修改**：
-   * 支援 Web 端與 Garmin 手錶共用同一組帳號密碼（預設 `admin` / `admin`）。
-   * 內建全屏登入防護，並可在「系統設定」隨時修改密碼。
-6. **自訂 Server URL**：
-   * 支援 Nginx、Caddy 或 Cloudflare 反向代理網址切換。
+支援一鍵下載 YouTube 音訊、Podcast 節目標籤，內建 Windows 檔案總管風格之樹狀分類管理、音訊試聽迷你播放器、曲目重新命名，並透過 USB 一鍵直傳 Garmin 手錶原生音樂磁碟（自動產生手錶相容之 `.m3u8` 播放清單）。
 
 ---
 
-## 🚀 Docker Compose 快速部署
+## 🚀 立即下載使用 (無需安裝環境)
 
-### 1. 建立 `docker-compose.yml`
-您可以直接使用 Docker Hub 官方釋出的映像檔 `joely1101/garmin-music:latest`，無需本機編譯：
+前往本專案的 [Releases 頁面](../../releases) 下載最新版本的：
+- **`GarminMusicStudio-Windows-x64.zip`**
 
-```yaml
-version: '3.8'
+### 使用方式：
+1. 解壓縮 `GarminMusicStudio-Windows-x64.zip` 至電腦任意資料夾（例如 `D:\GarminMusicStudio\`）。
+2. 雙擊執行 **`GarminMusicStudio.exe`**。
+3. 程式啟動後會自動開啟瀏覽器管理介面（預設為 `http://127.0.0.1:8090`），開始使用！
 
-services:
-  garmin-music:
-    image: joely1101/garmin-music:latest
-    container_name: garmin-music-server
-    restart: unless-stopped
-    ports:
-      - "8090:8090"
-    volumes:
-      # 持久化音樂檔案與資料庫（目錄掛載，自動建立資料庫檔案）
-      - ./data/music:/app/backend/music
-      - ./data/db:/app/backend/data
-    environment:
-      - TZ=Asia/Taipei
-      - DATA_DIR=/app/backend/data
-      - MUSIC_DIR=/app/backend/music
-```
+---
 
-### 2. 啟動服務
-在 `docker-compose.yml` 同級目錄執行：
+## ✨ 核心特色與功能
 
+### 1. ⌚ Garmin 手錶原生相容與自動偵測
+- **智慧磁碟偵測**：進入「手錶路徑與設定」，點擊「自動偵測」即可搜尋電腦內掛載的 Garmin 手錶或 `Music` 資料夾；亦支援手動指定目錄。
+- **自動產生手錶播放清單 (`.m3u8`)**：歌曲複製到手錶後，會自動在手錶根目錄產生對應的 `.m3u8` 清單。手錶拔除 USB 後，進入手錶「音樂」選單選擇「播放清單」即可直接播放整包歌曲。
+- **自訂多選播放清單**：可在手錶歌曲列表中跨目錄勾選多首喜愛曲目，一鍵建立自訂播放清單（如「馬拉松配速清單」）。
+
+### 2. 💻 電腦音樂庫（Windows 檔案總管樹狀風格）
+- **清楚的階層樹狀視圖**：採用 Windows 檔案總管經典資料夾圖示與階層延伸導引線，歌曲相對於目錄清晰縮排，不再有繁複干擾的底線。
+- **目錄單層管理**：直觀管理音樂分類（如 `輕鬆跑`、`音樂`、`重訓`），支援自訂新增目錄與一鍵整目錄同步至手錶。
+- **歌曲與檔案重新命名 (✏️)**：可隨時修改電腦端或手錶端的歌曲名稱，程式會自動同步更新實體 `.mp3` 檔名與 ID3 Tag 標籤，手錶螢幕即時顯示正確名稱。
+
+### 3. 🎵 側邊欄迷你音樂播放器
+- 點擊任一歌曲即可於左下角播放試聽，緊貼手錶連線狀態上方，版面精巧不遮擋。
+- 具備 **時間進度條（可點擊/拖曳至特定時間）** 與完整五大控制按鍵：
+  1. ⏮️ **上一首**
+  2. ⏯️ **播放 / 暫停**
+  3. ⏭️ **下一首**
+  4. ⏩ **快轉 10 秒 (`+10s`)**
+  5. ⚡ **倍速循環切換 (`1x` / `1.2x` / `1.5x`)**：快聽長篇音訊與 Podcast 更方便。
+
+### 4. 📥 YouTube 音樂與 Podcast 快速下載
+- **YouTube 專用規格轉碼**：輸入 YouTube / YouTube Music 網址，背景自動以 `yt-dlp` 及 `ffmpeg` 下載並轉碼為 Garmin 手錶最佳規格（192kbps、44.1kHz Stereo、ID3v2.3）。支援整張專輯/播放清單批次下載。
+- **Podcast 單集瀏覽與下載**：內建 Apple iTunes Podcast 搜尋器，輸入節目名稱即可直接瀏覽單集並指定儲存目錄下載。
+
+---
+
+## 🛠️ 本機開發與手動打包說明
+
+如果您希望自行修改原始碼或於本地進行編譯打包：
+
+### 1. 必備環境
+- Python 3.12+ (64-bit)
+- Node.js 20+ 與 npm
+- Git
+
+### 2. 前端開發與建置
 ```bash
-docker compose pull && docker compose up -d
-```
-
-服務啟動後，開啟瀏覽器即可訪問 Web 管理後台：
-👉 **`http://<您的伺服器IP>:8090`**
-
-### 3. 資料持久化路徑
-音樂檔案與資料庫會自動掛載於本機 `./data/` 目錄：
-* `./data/music/`：存放所有音樂目錄與 MP3 音訊檔。
-* `./data/music.db`：SQLite 資料庫（存放曲庫中繼資料、手錶同步勾選狀態與使用者密碼）。
-
----
-
-## 🛠️ GitHub Actions 自動化 CI/CD
-本專案已整合 GitHub Actions 工作流程（`.github/workflows/docker-publish.yml`）：
-* 只要對 `main` 分支有程式碼推送（Push），將自動觸發多架構建置，並即時發佈最新 Docker Image 至 **Docker Hub: `joely1101/garmin-music:latest`**。
-* **GitHub Repository Secrets 設定需求**：
-  若要啟用自動推送，請在您的 GitHub 儲存庫 `Settings` -> `Secrets and variables` -> `Actions` 新增：
-  1. `DOCKERHUB_USERNAME`: 您的 Docker Hub 帳號（`joely1101`）
-  2. `DOCKERHUB_TOKEN`: 您的 Docker Hub Access Token
-
----
-
-## ⌚ Garmin 手錶端設定與同步完整指引
-
-本伺服器完美相容 **YuMusic** 手錶 App。請依照以下步驟在 Garmin 手錶上下載安裝並進行 Wi-Fi 同步：
-
-### 第一步：在手錶上安裝 YuMusic App
-1. 手機打開 **Garmin Connect IQ Store** App（可在 iOS App Store 或 Google Play 下載）。
-2. 在商店搜尋欄中輸入 **`YuMusic`**（或搜尋作者 `isyuricunha`）。
-3. 點擊 **下載 / 安裝**，將 App 同步安裝到您的 Garmin 手錶上。
-
-### 第二步：設定伺服器連線資訊
-1. 打開手機上的 **Garmin Connect** 或 **Connect IQ** App。
-2. 進入 **我的裝置 (My Devices)** -> **我的應用程式 / 音樂** -> 點擊 **YuMusic** -> 選擇 **設定 (Settings)**。
-3. 填入連線參數：
-   * **Server URL**：輸入您的伺服器網址（例如 `http://192.168.1.100:8090`，若有反向代理請填寫 `https://music.yourdomain.com`）。
-   * **Username**：`admin`（或您自訂的使用者名稱）。
-   * **Password**：`admin`（或您在網頁設定中修改的新密碼）。
-   * **Max Bitrate**：建議選擇 `192`（或 `320`，與後端轉碼品質相符）。
-   * **Legacy Authentication**：保持關閉（預設關閉即可支援標準 Token 認證）。
-4. 點擊 **儲存 (Save)**。
-
-### 第三步：挑選歌曲並在手錶上同步
-1. **在 Web 管理介面挑選歌曲**：
-   * 用手機或電腦瀏覽器打開 `http://<您的IP>:8090` 並登入。
-   * 在「曲庫管理」中，將您希望推送到手錶的歌曲打勾（可切換到「手錶歌單」確認挑選列表）。
-2. **手錶 Wi-Fi 同步**：
-   * 確保手錶已連上 Wi-Fi 網路（手錶設定 -> Wi-Fi）。
-   * 在手錶上長按或開啟音樂控制項，將音樂來源切換為 **YuMusic**。
-   * 進入選單點選 **Update Downloads (更新同步)**。
-   * 手錶將自動連接 Wi-Fi 並向伺服器拉取您打勾的歌曲清單，依序下載 MP3 檔案至手錶本機儲存空間中。
-3. **開始聆聽**：
-   * 配對藍牙耳機至手錶後，即可在跑步或運動時離線聽歌，無需攜帶手機！
-
----
-
-## 📱 本地手動啟動開發環境
-
-若要在本地（如 WSL Ubuntu / Linux 環境）直接執行：
-
-### 1. 後端啟動 (FastAPI)
-```bash
-# 進入後端目錄
-cd backend
-
-# 安裝 Python 相依
-pip install -r requirements.txt
-
-# 啟動伺服器 (埠號 8090)
-python -m uvicorn main:app --host 0.0.0.0 --port 8090
-```
-
-### 2. 前端構建 (React + Vite + Tailwind)
-```bash
-# 進入前端目錄
 cd frontend
-
-# 安裝 Node 套件
 npm install
-
-# 編譯前端靜態檔案 (供後端掛載)
 npm run build
+cd ..
 ```
+
+### 3. 後端依賴安裝
+```bash
+pip install -r backend/requirements.txt
+pip install pyinstaller yt-dlp mutagen feedparser uvicorn fastapi pydantic
+```
+
+### 4. 準備 FFmpeg 執行檔
+將 Windows 版本的 `ffmpeg.exe` 與 `ffprobe.exe` 放置於根目錄下的 `bin/` 目錄：
+```
+bin/
+├── ffmpeg.exe
+└── ffprobe.exe
+```
+
+### 5. 使用 PyInstaller 打包單一執行檔
+```bash
+pyinstaller --clean GarminMusicStudio.spec
+```
+編譯完成後，免安裝執行檔將位於 `dist/GarminMusicStudio.exe`。
 
 ---
 
-## 📄 License
-MIT License
+## 🤖 GitHub Actions 自動化建置發布 (CI/CD)
+
+本分支已內建 GitHub Actions 自動化工作流程 (`.github/workflows/build-exe.yml`)：
+
+當您建立並推送版號標籤（如 `v1.0.0`）至 GitHub 時：
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+GitHub Actions 會自動在 Windows 虛擬環境中：
+1. 編譯前端 React SPA (`npm run build`)
+2. 下載官方最新版 FFmpeg 工具鏈
+3. 安裝 Python 依賴並透過 PyInstaller 打包出獨立的 `GarminMusicStudio.exe`
+4. 自動打包為 `GarminMusicStudio-Windows-x64.zip` 並直接發布至 GitHub Releases 供使用者下載！
+
+您也可以在 GitHub 專案頁面的 **Actions** 頁籤中手動點擊 **「Run workflow」** 即時觸發打包。

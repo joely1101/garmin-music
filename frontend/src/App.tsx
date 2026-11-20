@@ -780,8 +780,9 @@ export default function App() {
     <div className="flex h-screen w-screen bg-neutral-950 text-neutral-100 font-sans overflow-hidden select-none">
       
       {/* ---------------- 1. 桌面側邊導航欄 (Sidebar) ---------------- */}
-      <aside className="w-64 bg-neutral-900 border-r border-neutral-800 flex flex-col justify-between shrink-0">
-        <div>
+      <aside className="w-64 bg-neutral-900 border-r border-neutral-800 flex flex-col justify-between shrink-0 overflow-hidden">
+        {/* 上半部：Logo、選單、分類目錄 */}
+        <div className="flex-1 overflow-y-auto min-h-0">
           {/* Logo */}
           <div className="p-5 border-b border-neutral-800 flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-orange-600 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-950/30">
@@ -905,99 +906,101 @@ export default function App() {
           </div>
         </div>
 
-        {/* 播放器資訊小卡 (歌曲播放中或已選曲時顯示於左下角) */}
-        {playingTrackId && (() => {
-          const activeTrack = localTracks.find(t => t.id === playingTrackId);
-          if (!activeTrack) return null;
+        {/* 下半部固定區：播放器資訊緊貼於 Garmin 手錶連線狀態上方 */}
+        <div className="shrink-0 flex flex-col justify-end">
+          {/* 播放器資訊小卡 (歌曲播放中或已選曲時顯示於 Garmin 手錶狀態正上方) */}
+          {playingTrackId && (() => {
+            const activeTrack = localTracks.find(t => t.id === playingTrackId);
+            if (!activeTrack) return null;
 
-          return (
-            <div className="p-3.5 border-t border-neutral-800 bg-neutral-900/90 backdrop-blur space-y-2.5 animate-fadeIn">
-              {/* 曲目資訊 */}
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-8 h-8 rounded-lg bg-orange-600/20 border border-orange-500/30 flex items-center justify-center shrink-0">
-                  <Music2 className={`w-4 h-4 text-orange-400 ${isPlaying ? 'animate-pulse' : ''}`} />
+            return (
+              <div className="p-3.5 border-t border-neutral-800 bg-neutral-900/95 backdrop-blur space-y-2.5 animate-fadeIn">
+                {/* 曲目資訊 */}
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-orange-600/20 border border-orange-500/30 flex items-center justify-center shrink-0">
+                    <Music2 className={`w-4 h-4 text-orange-400 ${isPlaying ? 'animate-pulse' : ''}`} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-white truncate" title={activeTrack.title}>
+                      {activeTrack.title}
+                    </p>
+                    <p className="text-[10px] text-neutral-400 truncate">
+                      {activeTrack.artist || 'Unknown Artist'}
+                    </p>
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-white truncate" title={activeTrack.title}>
-                    {activeTrack.title}
-                  </p>
-                  <p className="text-[10px] text-neutral-400 truncate">
-                    {activeTrack.artist || 'Unknown Artist'}
-                  </p>
+
+                {/* 時間滑桿 (進度條) */}
+                <div className="space-y-1">
+                  <input
+                    type="range"
+                    min="0"
+                    max={duration || 100}
+                    step="0.5"
+                    value={currentTime}
+                    onChange={(e) => handleSeek(parseFloat(e.target.value))}
+                    className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-orange-500"
+                  />
+                  <div className="flex justify-between text-[10px] text-neutral-500 font-mono">
+                    <span>{formatTime(currentTime)}</span>
+                    <span>{formatTime(duration)}</span>
+                  </div>
+                </div>
+
+                {/* 5 個操作控制按鍵 */}
+                <div className="flex items-center justify-between pt-0.5">
+                  {/* 1. 前一首 */}
+                  <button
+                    onClick={handlePlayPrev}
+                    className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition"
+                    title="上一首"
+                  >
+                    <SkipBack className="w-4 h-4" />
+                  </button>
+
+                  {/* 2. 暫停 / 播放 */}
+                  <button
+                    onClick={handleTogglePlayPause}
+                    className="w-8 h-8 rounded-full bg-orange-600 hover:bg-orange-500 text-white flex items-center justify-center shadow-md shadow-orange-950/40 transition"
+                    title={isPlaying ? "暫停" : "播放"}
+                  >
+                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                  </button>
+
+                  {/* 3. 下一首 */}
+                  <button
+                    onClick={handlePlayNext}
+                    className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition"
+                    title="下一首"
+                  >
+                    <SkipForward className="w-4 h-4" />
+                  </button>
+
+                  {/* 4. 前進 10 秒 */}
+                  <button
+                    onClick={handleForward10}
+                    className="px-1.5 py-1 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition flex items-center gap-0.5"
+                    title="快轉 10 秒"
+                  >
+                    <FastForward className="w-3.5 h-3.5" />
+                    <span className="text-[10px] font-mono">+10s</span>
+                  </button>
+
+                  {/* 5. 循環倍速 (1x, 1.2x, 1.5x) */}
+                  <button
+                    onClick={handleCycleSpeed}
+                    className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-orange-400 hover:text-orange-300 font-mono text-[11px] font-bold border border-neutral-700 transition"
+                    title="切換播放速度 (1x / 1.2x / 1.5x)"
+                  >
+                    {playbackRate}x
+                  </button>
                 </div>
               </div>
+            );
+          })()}
 
-              {/* 時間滑桿 (進度條) */}
-              <div className="space-y-1">
-                <input
-                  type="range"
-                  min="0"
-                  max={duration || 100}
-                  step="0.5"
-                  value={currentTime}
-                  onChange={(e) => handleSeek(parseFloat(e.target.value))}
-                  className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-orange-500"
-                />
-                <div className="flex justify-between text-[10px] text-neutral-500 font-mono">
-                  <span>{formatTime(currentTime)}</span>
-                  <span>{formatTime(duration)}</span>
-                </div>
-              </div>
-
-              {/* 5 個操作控制按鍵 */}
-              <div className="flex items-center justify-between pt-0.5">
-                {/* 1. 前一首 */}
-                <button
-                  onClick={handlePlayPrev}
-                  className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition"
-                  title="上一首"
-                >
-                  <SkipBack className="w-4 h-4" />
-                </button>
-
-                {/* 2. 暫停 / 播放 */}
-                <button
-                  onClick={handleTogglePlayPause}
-                  className="w-8 h-8 rounded-full bg-orange-600 hover:bg-orange-500 text-white flex items-center justify-center shadow-md shadow-orange-950/40 transition"
-                  title={isPlaying ? "暫停" : "播放"}
-                >
-                  {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
-                </button>
-
-                {/* 3. 下一首 */}
-                <button
-                  onClick={handlePlayNext}
-                  className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition"
-                  title="下一首"
-                >
-                  <SkipForward className="w-4 h-4" />
-                </button>
-
-                {/* 4. 前進 10 秒 */}
-                <button
-                  onClick={handleForward10}
-                  className="px-1.5 py-1 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition flex items-center gap-0.5"
-                  title="快轉 10 秒"
-                >
-                  <FastForward className="w-3.5 h-3.5" />
-                  <span className="text-[10px] font-mono">+10s</span>
-                </button>
-
-                {/* 5. 循環倍速 (1x, 1.2x, 1.5x) */}
-                <button
-                  onClick={handleCycleSpeed}
-                  className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-orange-400 hover:text-orange-300 font-mono text-[11px] font-bold border border-neutral-700 transition"
-                  title="切換播放速度 (1x / 1.2x / 1.5x)"
-                >
-                  {playbackRate}x
-                </button>
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* 手錶硬碟快速狀態小卡 */}
-        <div className="p-4 border-t border-neutral-800 bg-neutral-900/50">
+          {/* 手錶硬碟快速狀態小卡 */}
+          <div className="p-4 border-t border-neutral-800 bg-neutral-900/50">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               <span className={`w-2 h-2 rounded-full ${watchStatus.connected ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' : 'bg-amber-500'}`} />
@@ -1029,6 +1032,7 @@ export default function App() {
             </div>
           )}
         </div>
+      </div>
       </aside>
 
       {/* ---------------- 2. 主作業內容區域 ---------------- */}
