@@ -7,6 +7,7 @@ import shutil
 import re
 import asyncio
 import subprocess
+import tempfile
 import base64
 import json
 import urllib.request
@@ -1344,25 +1345,29 @@ def set_watch_config(cfg: WatchDriveConfig, current_user: str = Depends(get_curr
 
 @app.post("/api/watch/browse-folder")
 def browse_watch_folder(current_user: str = Depends(get_current_user_from_req)):
-    """彈出 Windows 原生資料夾選擇視窗讓使用者選取目錄（使用 Windows Shell COM，原生置頂且零卡頓）"""
+    """彈出 Windows 原生資料夾選擇視窗讓使用者選取目錄（使用 Windows Shell COM 原生置頂）"""
     selected = ""
     if sys.platform == "win32":
+        fd, vbs_path = tempfile.mkstemp(suffix=".vbs")
         try:
-            # 使用 Windows 內建 cscript.exe 調用 Shell.Application.BrowseForFolder
-            # &H0040 = BIF_NEWDIALOGSTYLE (現代樣式, 支援調整大小與建立新資料夾)
-            # 17 = ssfDRIVES (以「本機 / This PC」為根目錄，可瀏覽磁碟機與連線裝置)
-            vbs_script = '''Set objShell = CreateObject("Shell.Application")
+            vbs_script = '''Option Explicit
+Dim objShell, objFolder
+Set objShell = CreateObject("Shell.Application")
+' 0: hWnd, title, &H0040: BIF_NEWDIALOGSTYLE, 17: ssfDRIVES (本機)
 Set objFolder = objShell.BrowseForFolder(0, "請選取 Garmin 手錶的 Music 資料夾：", &H0040, 17)
 If Not objFolder Is Nothing Then
     WScript.Echo objFolder.Self.Path
 End If
 '''
+            with os.fdopen(fd, 'w', encoding='ansi') as f:
+                f.write(vbs_script)
+
             si = subprocess.STARTUPINFO()
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             si.wShowWindow = 0  # SW_HIDE: 完全隱藏主控台黑視窗
+
             res = subprocess.run(
-                ["cscript.exe", "//nologo", "//E:VBScript", "-"],
-                input=vbs_script,
+                ["cscript.exe", "//nologo", vbs_path],
                 capture_output=True,
                 text=True,
                 encoding="ansi",
@@ -1376,6 +1381,12 @@ End If
         except Exception as e:
             print(f"[BROWSE_FOLDER ERROR] {e}")
             raise HTTPException(status_code=500, detail=f"呼叫資料夾選取器失敗: {str(e)}")
+        finally:
+            try:
+                if os.path.exists(vbs_path):
+                    os.remove(vbs_path)
+            except Exception:
+                pass
 
     return {"status": "ok", "path": selected}
 

@@ -172,7 +172,6 @@ export default function App() {
 
   // Custom Path Input
   const [customPathInput, setCustomPathInput] = useState('');
-  const [detectingWatch, setDetectingWatch] = useState(false);
   const [browsingFolder, setBrowsingFolder] = useState(false);
 
   // Initial Load
@@ -413,38 +412,6 @@ export default function App() {
       }
     } catch (e: any) {
       alert(`路徑錯誤: ${e.message}`);
-    }
-  };
-
-  const handleAutoDetectWatch = async () => {
-    setDetectingWatch(true);
-    try {
-      const res = await fetch('/api/watch/status');
-      if (res.ok) {
-        const data: WatchStatus = await res.json();
-        setWatchStatus(data);
-        if (data.detected_drives && data.detected_drives.length > 0) {
-          const detected = data.detected_drives[0].path;
-          setCustomPathInput(detected);
-          // 自動套用儲存
-          await fetch('/api/watch/config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: detected })
-          });
-          await fetchWatchStatus();
-          alert(`自動偵測成功！已找到手錶路徑：${detected}`);
-        } else if (data.active_watch?.path) {
-          setCustomPathInput(data.active_watch.path);
-          alert(`手錶目前已連線，路徑為：${data.active_watch.path}`);
-        } else {
-          alert('電腦各磁碟中未找到 Garmin 手錶或 Music 目錄結構，請確認 USB 線已接好或手動指定。');
-        }
-      }
-    } catch (e: any) {
-      alert(`偵測失敗: ${e.message}`);
-    } finally {
-      setDetectingWatch(false);
     }
   };
 
@@ -1947,7 +1914,7 @@ export default function App() {
                 <div>
                   <h3 className="text-base font-bold text-white mb-1">手錶音樂磁碟路徑設定</h3>
                   <p className="text-xs text-neutral-400">
-                    可手動輸入手錶音樂資料夾路徑，或點選「手動選擇目錄」開啟目錄導覽選取，亦可點選「自動偵測」由系統搜尋。
+                    可手動輸入手錶音樂資料夾路徑，或點選「手動選擇目錄」開啟目錄導覽選取。
                   </p>
                 </div>
 
@@ -1971,15 +1938,6 @@ export default function App() {
                     >
                       {browsingFolder ? <Loader2 className="w-4 h-4 animate-spin text-orange-400" /> : <FolderSearch className="w-4 h-4 text-orange-400" />}
                       <span>手動選擇目錄</span>
-                    </button>
-                    <button
-                      onClick={handleAutoDetectWatch}
-                      disabled={detectingWatch}
-                      className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 rounded-lg text-sm font-medium flex items-center gap-1.5 transition shrink-0"
-                      title="搜尋電腦內磁碟尋找手錶目錄結構"
-                    >
-                      {detectingWatch ? <Loader2 className="w-4 h-4 animate-spin text-orange-400" /> : <RotateCw className="w-4 h-4 text-orange-400" />}
-                      <span>自動偵測</span>
                     </button>
                     <button
                       onClick={handleSaveWatchPath}
