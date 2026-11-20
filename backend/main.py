@@ -1344,43 +1344,35 @@ def set_watch_config(cfg: WatchDriveConfig, current_user: str = Depends(get_curr
 
 @app.post("/api/watch/browse-folder")
 def browse_watch_folder(current_user: str = Depends(get_current_user_from_req)):
-    """彈出 Windows 原生資料夾選擇視窗讓使用者選取目錄"""
-    current_path = ""
-    with get_db() as conn:
-        row = conn.execute("SELECT value FROM settings WHERE key = 'watch_mount_path'").fetchone()
-        if row and row["value"]:
-            current_path = row["value"]
-
+    """彈出 Windows 原生資料夾選擇視窗讓使用者選取目錄（使用 Windows Shell COM，原生置頂且零卡頓）"""
     selected = ""
     if sys.platform == "win32":
         try:
-            d = chr(36)
-            init_cmd = f'{d}dialog.SelectedPath = "{current_path}"\n' if (current_path and Path(current_path).exists()) else ''
-            ps_script = f'''Add-Type -AssemblyName System.Windows.Forms
-{d}dialog = New-Object -TypeName System.Windows.Forms.FolderBrowserDialog
-{d}dialog.Description = "請選取 Garmin 手錶的 Music 資料夾"
-{d}dialog.ShowNewFolderButton = {d}true
-{init_cmd}{d}topForm = New-Object -TypeName System.Windows.Forms.Form
-{d}topForm.TopMost = {d}true
-{d}result = {d}dialog.ShowDialog({d}topForm)
-if ({d}result -eq [System.Windows.Forms.DialogResult]::OK) {{
-    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-    Write-Output {d}dialog.SelectedPath
-}}
+            # 使用 Windows 內建 cscript.exe 調用 Shell.Application.BrowseForFolder
+            # &H0040 = BIF_NEWDIALOGSTYLE (現代樣式, 支援調整大小與建立新資料夾)
+            # 17 = ssfDRIVES (以「本機 / This PC」為根目錄，可瀏覽磁碟機與連線裝置)
+            vbs_script = '''Set objShell = CreateObject("Shell.Application")
+Set objFolder = objShell.BrowseForFolder(0, "請選取 Garmin 手錶的 Music 資料夾：", &H0040, 17)
+If Not objFolder Is Nothing Then
+    WScript.Echo objFolder.Self.Path
+End If
 '''
             si = subprocess.STARTUPINFO()
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = 0
+            si.wShowWindow = 0  # SW_HIDE: 完全隱藏主控台黑視窗
             res = subprocess.run(
-                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
+                ["cscript.exe", "//nologo", "//E:VBScript", "-"],
+                input=vbs_script,
                 capture_output=True,
                 text=True,
-                encoding="utf-8",
+                encoding="ansi",
                 errors="ignore",
                 startupinfo=si,
-                timeout=120
+                timeout=300
             )
             selected = res.stdout.strip()
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=408, detail="選取目錄逾時，請重新操作。")
         except Exception as e:
             print(f"[BROWSE_FOLDER ERROR] {e}")
             raise HTTPException(status_code=500, detail=f"呼叫資料夾選取器失敗: {str(e)}")
