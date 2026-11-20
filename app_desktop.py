@@ -79,7 +79,7 @@ def start_server(port: int):
             f.write(f"Server crashed: {e}\n")
 
 def open_ui(url: str):
-    """Open the UI in user's default browser or edge app mode."""
+    """Open the UI in user's default browser or edge app mode and return process if launched."""
     # Attempt to launch Edge in clean standalone App-Mode window
     edge_paths = [
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -89,13 +89,14 @@ def open_ui(url: str):
         if os.path.exists(edge):
             try:
                 import subprocess
-                subprocess.Popen([edge, f"--app={url}", "--window-size=1280,820"])
-                return
+                proc = subprocess.Popen([edge, f"--app={url}", "--window-size=1280,820"])
+                return proc
             except Exception:
                 pass
 
     # Fallback to default browser
     webbrowser.open(url)
+    return None
 
 def main():
     port = find_available_port(28888)
@@ -112,14 +113,30 @@ def main():
             f.write(f"Failed to start local server on {server_url}\n")
         sys.exit(1)
 
-    # Automatically launch UI window
-    open_ui(server_url)
+    # Initialize heartbeat time
+    import backend.main as bmain
+    bmain.last_heartbeat_time = time.time()
 
-    # Keep background process alive
+    # Automatically launch UI window
+    ui_proc = open_ui(server_url)
+
+    # Monitor UI process and heartbeat: auto exit when browser window is closed
+    grace_period_end = time.time() + 15.0  # Give user 15 seconds to load first page
     try:
         while True:
             time.sleep(1)
+            # 1. If Edge app process terminated, shut down immediately
+            if ui_proc is not None and ui_proc.poll() is not None:
+                break
+
+            # 2. Heartbeat check: if web UI hasn't sent heartbeat for > 6 seconds after grace period
+            now = time.time()
+            if now > grace_period_end:
+                if now - bmain.last_heartbeat_time > 6.0:
+                    break
     except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
         sys.exit(0)
 
 if __name__ == "__main__":

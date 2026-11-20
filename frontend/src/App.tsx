@@ -174,13 +174,24 @@ export default function App() {
   const [customPathInput, setCustomPathInput] = useState('');
   const [browsingFolder, setBrowsingFolder] = useState(false);
 
-  // Initial Load
+  // Initial Load & Heartbeat
   useEffect(() => {
     fetchFolders();
     fetchLocalTracks();
     fetchWatchStatus();
     const interval = setInterval(fetchDownloadTasks, 2500);
-    return () => clearInterval(interval);
+
+    // 每 3 秒發送一次心跳給後端，前端分頁/視窗關閉後後端能自動退出釋放目錄
+    const sendHeartbeat = () => {
+      fetch('/api/system/heartbeat', { method: 'POST' }).catch(() => {});
+    };
+    sendHeartbeat();
+    const heartbeatInterval = setInterval(sendHeartbeat, 3000);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(heartbeatInterval);
+    };
   }, []);
 
   // When watchStatus updates or connected, fetch watch tracks

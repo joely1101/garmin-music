@@ -1638,6 +1638,17 @@ def create_watch_playlist(req: CreateWatchPlaylistRequest, current_user: str = D
 
     return {"status": "ok", "playlist_name": clean_name}
 
+# ----------------- Heartbeat & Auto-Shutdown Endpoint -----------------
+last_heartbeat_time = asyncio.get_event_loop().time() if asyncio.get_event_loop().is_running() else 0
+
+@app.post("/api/system/heartbeat")
+def client_heartbeat():
+    """前端定期發送心跳，更新最後活躍時間"""
+    import time
+    global last_heartbeat_time
+    last_heartbeat_time = time.time()
+    return {"status": "ok"}
+
 # ----------------- Serve Frontend Static Files -----------------
 if FRONTEND_DIST.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
