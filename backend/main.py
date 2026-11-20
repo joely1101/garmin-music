@@ -863,7 +863,25 @@ def rename_watch_track(req: RenameWatchTrackRequest, current_user: str = Depends
             if drives:
                 target_str = drives[0]["path"]
 
-    if not target_str or not Path(target_str).exists():
+    if not target_str:
+        raise HTTPException(status_code=400, detail="未找到 Garmin 手錶音樂磁碟")
+
+    # MTP 重新命名處理
+    if target_str.startswith("mtp:\\") or target_str.startswith("mtp:/"):
+        clean = target_str[5:].replace("/", "\\").strip("\\")
+        parts = clean.split("\\", 1)
+        dev_name = parts[0]
+        sub_path = parts[1] if len(parts) > 1 else ""
+        old_fn = Path(req.rel_path).name
+        new_fn = f"{clean_title}.mp3"
+        if old_fn.lower() != new_fn.lower():
+            data = call_mtp_helper("rename_file", device_name=dev_name, sub_path=sub_path, file_name=old_fn, new_name=new_fn, timeout=10)
+            if not data or not data.get("success"):
+                err = data.get("error") if data else "重新命名手錶檔案失敗"
+                raise HTTPException(status_code=500, detail=err)
+        return {"status": "ok", "new_title": clean_title, "new_rel_path": new_fn}
+
+    if not Path(target_str).exists():
         raise HTTPException(status_code=400, detail="未找到 Garmin 手錶音樂磁碟")
 
     watch_dir = Path(target_str)
@@ -1232,32 +1250,195 @@ class WatchDeleteRequest(BaseModel):
     rel_paths: List[str]
     watch_path: Optional[str] = None
 
+def get_mtp_helper_path() -> Path:
+    """取得 MTP 裝置輔助腳本路徑"""
+    if getattr(sys, 'frozen', False):
+        p = Path(sys._MEIPASS) / "backend" / "mtp_helper.ps1"
+        if p.exists():
+            return p
+        p = Path(sys.executable).resolve().parent / "backend" / "mtp_helper.ps1"
+        if p.exists():
+            return p
+    return Path(__file__).resolve().parent / "mtp_helper.ps1"
+
+def call_mtp_helper(action: str, device_name: str = "", sub_path: str = "", source_file: str = "", file_name: str = "", new_name: str = "", timeout: int = 10) -> Optional[Any]:
+    """安全呼叫 mtp_helper.ps1 並解析 JSON，防止 CP950/UTF-8 編碼異常與超時"""
+    script = get_mtp_helper_path()
+    if not script.exists():
+        print(f"[MTP ERROR] 找不到輔助腳本: {script}")
+        return None
+    try:
+        import subprocess, json
+        cmd = [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-File", str(script),
+            "-Action", action,
+            "-DeviceName", device_name,
+            "-SubPath", sub_path,
+            "-SourceFile", source_file,
+            "-FileName", file_name,
+            "-NewName", new_name
+        ]
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        res = subprocess.run(cmd, capture_output=True, text=False, timeout=timeout, creationflags=flags)
+        try:
+            out = res.stdout.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            out = res.stdout.decode("cp950", errors="replace").strip()
+
+        if res.returncode == 0 and out:
+            return json.loads(out)
+        else:
+            try:
+                err = res.stderr.decode("utf-8").strip()
+            except UnicodeDecodeError:
+                err = res.stderr.decode("cp950", errors="replace").strip()
+            print(f"[MTP ERROR] Action={action} ReturnCode={res.returncode}, STDERR={err}")
+    except Exception as e:
+        print(f"[MTP EXCEPTION] Action={action} failed: {e}")
+    return None
+
+def parse_mtp_storage(total_str: str, free_str: str, used_pct_str: str) -> Dict[str, Any]:
+    def to_bytes(s: str) -> int:
+        if not s:
+            return 0
+        s = s.strip()
+        mult = 1
+        if "TB" in s.upper():
+            mult = 1024**4
+        elif "GB" in s.upper():
+            mult = 1024**3
+        elif "MB" in s.upper():
+            mult = 1024**2
+        elif "KB" in s.upper():
+            mult = 1024
+        nums = re.findall(r"[\d\.]+", s)
+        if nums:
+            try:
+                return int(float(nums[0]) * mult)
+            except Exception:
+                pass
+        return 0
+
+    total_bytes = to_bytes(total_str)
+    free_bytes = to_bytes(free_str)
+    used_bytes = max(0, total_bytes - free_bytes)
+
+    used_percent = 0.0
+    nums = re.findall(r"[\d\.]+", used_pct_str or "")
+    if nums:
+        try:
+            used_percent = float(nums[0])
+        except Exception:
+            pass
+    elif total_bytes > 0:
+        used_percent = round((used_bytes / total_bytes) * 100, 1)
+
+    return {
+        "total_bytes": total_bytes,
+        "free_bytes": free_bytes,
+        "used_bytes": used_bytes,
+        "free_gb": round(free_bytes / (1024**3), 2),
+        "total_gb": round(total_bytes / (1024**3), 2),
+        "used_percent": used_percent
+    }
+
+def get_mtp_storage(mtp_path: str) -> Dict[str, Any]:
+    if not (mtp_path.startswith("mtp:\\") or mtp_path.startswith("mtp:/")):
+        return {"total_bytes": 0, "free_bytes": 0, "used_bytes": 0, "free_gb": 0, "total_gb": 0, "used_percent": 0}
+    clean = mtp_path[5:].replace("/", "\\").strip("\\")
+    parts = clean.split("\\", 1)
+    dev_name = parts[0]
+    sub_path = parts[1] if len(parts) > 1 else ""
+    res = call_mtp_helper("get_storage", device_name=dev_name, sub_path=sub_path, timeout=8)
+    if res and isinstance(res, dict):
+        return parse_mtp_storage(res.get("total_str", ""), res.get("free_str", ""), res.get("used_pct", ""))
+    return {"total_bytes": 0, "free_bytes": 0, "used_bytes": 0, "free_gb": 0, "total_gb": 0, "used_percent": 0}
+
+def get_mtp_devices_list() -> List[Dict[str, Any]]:
+    """透過 PowerShell 查詢目前連接中的 MTP / 可攜式裝置 (例如 Garmin 手錶)"""
+    res = call_mtp_helper("list_devices", timeout=8)
+    if isinstance(res, list):
+        return res
+    elif isinstance(res, dict):
+        return [res]
+    return []
+
 def detect_garmin_watch_drives() -> List[Dict[str, Any]]:
-    """掃描 Windows 磁碟機代號，偵測 Garmin 手錶的 Music 目錄"""
+    """掃描 Windows 磁碟機代號與 MTP 可攜式裝置，偵測 Garmin 手錶的 Music 目錄"""
     import string
     candidates = []
     
     # 支援設定檔自訂優先
-    custom_path = None
     with get_db() as conn:
         row = conn.execute("SELECT value FROM settings WHERE key = 'watch_mount_path'").fetchone()
         if row and row["value"]:
-            custom_path = Path(row["value"])
-            if custom_path.exists():
-                try:
-                    t, u, f = shutil.disk_usage(str(custom_path))
-                    candidates.append({
-                        "path": str(custom_path.resolve()),
-                        "drive": custom_path.drive,
-                        "label": f"自訂路徑 ({custom_path})",
-                        "total_bytes": t,
-                        "free_bytes": f,
-                        "used_bytes": u,
-                        "is_custom": True
-                    })
-                except Exception:
-                    pass
+            val = row["value"].strip()
+            if val.startswith("mtp:\\") or val.startswith("mtp:/"):
+                st = get_mtp_storage(val)
+                candidates.append({
+                    "path": val,
+                    "drive": val.split("\\")[1] if "\\" in val else val,
+                    "label": "自訂路徑 (MTP 手錶)",
+                    "total_bytes": st["total_bytes"],
+                    "free_bytes": st["free_bytes"],
+                    "used_bytes": st["used_bytes"],
+                    "free_gb": st["free_gb"],
+                    "total_gb": st["total_gb"],
+                    "used_percent": st["used_percent"],
+                    "is_custom": True,
+                    "is_mtp": True
+                })
+            else:
+                custom_path = Path(val)
+                if custom_path.exists():
+                    try:
+                        t, u, f = shutil.disk_usage(str(custom_path))
+                        candidates.append({
+                            "path": str(custom_path.resolve()),
+                            "drive": custom_path.drive,
+                            "label": f"自訂路徑 ({custom_path})",
+                            "total_bytes": t,
+                            "free_bytes": f,
+                            "used_bytes": u,
+                            "free_gb": round(f / (1024**3), 2),
+                            "total_gb": round(t / (1024**3), 2),
+                            "used_percent": round((u / t) * 100, 1) if t > 0 else 0,
+                            "is_custom": True,
+                            "is_mtp": False
+                        })
+                    except Exception:
+                        pass
 
+    # 1. 偵測 MTP 連接之 Garmin 手錶
+    try:
+        mtp_garmin = call_mtp_helper("detect_garmin", timeout=8)
+        if isinstance(mtp_garmin, dict):
+            mtp_garmin = [mtp_garmin]
+        if isinstance(mtp_garmin, list):
+            for mg in mtp_garmin:
+                mpath = mg.get("path")
+                if mpath and not any(c["path"].lower() == mpath.lower() for c in candidates):
+                    st = parse_mtp_storage(mg.get("total_str", ""), mg.get("free_str", ""), mg.get("used_pct", ""))
+                    candidates.append({
+                        "path": mpath,
+                        "drive": mg.get("name", "MTP"),
+                        "label": mg.get("label", f"Garmin 手錶 ({mg.get('name')})"),
+                        "total_bytes": st["total_bytes"],
+                        "free_bytes": st["free_bytes"],
+                        "used_bytes": st["used_bytes"],
+                        "free_gb": st["free_gb"],
+                        "total_gb": st["total_gb"],
+                        "used_percent": st["used_percent"],
+                        "is_custom": False,
+                        "is_mtp": True
+                    })
+    except Exception as e:
+        print(f"[MTP DETECT ERROR] {e}")
+
+    # 2. 偵測傳統磁碟槽
     for letter in string.ascii_uppercase:
         drive_str = f"{letter}:\\"
         drive_path = Path(drive_str)
@@ -1266,7 +1447,6 @@ def detect_garmin_watch_drives() -> List[Dict[str, Any]]:
             
         try:
             total, used, free = shutil.disk_usage(drive_str)
-            # 尋找標準 Garmin 目錄或任何包含 Music / music 的手錶結構
             possible_dirs = [
                 drive_path / "GARMIN" / "Music",
                 drive_path / "Garmin" / "Music",
@@ -1279,8 +1459,7 @@ def detect_garmin_watch_drives() -> List[Dict[str, Any]]:
             
             for p in possible_dirs:
                 if p.exists() and p.is_dir():
-                    # 避免重複加入
-                    if not any(c["path"] == str(p.resolve()) for c in candidates):
+                    if not any(c["path"].lower() == str(p.resolve()).lower() for c in candidates):
                         is_garmin = "GARMIN" in str(p).upper()
                         label = f"Garmin 手錶 ({letter}:)" if is_garmin else f"抽取式磁碟 ({letter}:\\Music)"
                         candidates.append({
@@ -1290,7 +1469,11 @@ def detect_garmin_watch_drives() -> List[Dict[str, Any]]:
                             "total_bytes": total,
                             "free_bytes": free,
                             "used_bytes": used,
-                            "is_custom": False
+                            "free_gb": round(free / (1024**3), 2),
+                            "total_gb": round(total / (1024**3), 2),
+                            "used_percent": round((used / total) * 100, 1) if total > 0 else 0,
+                            "is_custom": False,
+                            "is_mtp": False
                         })
         except Exception:
             continue
@@ -1307,24 +1490,52 @@ def get_watch_status(current_user: str = Depends(get_current_user_from_req)):
     
     with get_db() as conn:
         row = conn.execute("SELECT value FROM settings WHERE key = 'watch_mount_path'").fetchone()
-        if row and row["value"] and Path(row["value"]).exists():
-            active_path = row["value"]
+        if row and row["value"]:
+            val = row["value"].strip()
+            if val.startswith("mtp:\\") or val.startswith("mtp:/"):
+                active_path = val
+            elif Path(val).exists():
+                active_path = val
             
     active_info = None
-    if active_path and Path(active_path).exists():
-        try:
-            t, u, f = shutil.disk_usage(active_path)
-            active_info = {
-                "path": str(Path(active_path).resolve()),
-                "total_bytes": t,
-                "free_bytes": f,
-                "used_bytes": u,
-                "free_gb": round(f / (1024**3), 2),
-                "total_gb": round(t / (1024**3), 2),
-                "used_percent": round((u / t) * 100, 1) if t > 0 else 0
-            }
-        except Exception:
-            pass
+    if active_path:
+        if active_path.startswith("mtp:\\") or active_path.startswith("mtp:/"):
+            matched = next((c for c in drives if c["path"].lower() == active_path.lower()), None)
+            if matched and matched.get("total_bytes", 0) > 0:
+                active_info = {
+                    "path": active_path,
+                    "total_bytes": matched["total_bytes"],
+                    "free_bytes": matched["free_bytes"],
+                    "used_bytes": matched["used_bytes"],
+                    "free_gb": matched["free_gb"],
+                    "total_gb": matched["total_gb"],
+                    "used_percent": matched["used_percent"]
+                }
+            else:
+                st = get_mtp_storage(active_path)
+                active_info = {
+                    "path": active_path,
+                    "total_bytes": st["total_bytes"],
+                    "free_bytes": st["free_bytes"],
+                    "used_bytes": st["used_bytes"],
+                    "free_gb": st["free_gb"],
+                    "total_gb": st["total_gb"],
+                    "used_percent": st["used_percent"]
+                }
+        elif Path(active_path).exists():
+            try:
+                t, u, f = shutil.disk_usage(active_path)
+                active_info = {
+                    "path": str(Path(active_path).resolve()),
+                    "total_bytes": t,
+                    "free_bytes": f,
+                    "used_bytes": u,
+                    "free_gb": round(f / (1024**3), 2),
+                    "total_gb": round(t / (1024**3), 2),
+                    "used_percent": round((u / t) * 100, 1) if t > 0 else 0
+                }
+            except Exception:
+                pass
 
     return {
         "connected": active_info is not None,
@@ -1348,64 +1559,6 @@ def set_watch_config(cfg: WatchDriveConfig, current_user: str = Depends(get_curr
         conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('watch_mount_path', ?)", (saved_path,))
         conn.commit()
     return {"status": "ok", "path": saved_path}
-
-def get_mtp_helper_path() -> Path:
-    """取得 MTP 裝置輔助腳本路徑"""
-    if getattr(sys, 'frozen', False):
-        p = Path(sys._MEIPASS) / "backend" / "mtp_helper.ps1"
-        if p.exists():
-            return p
-        p = Path(sys.executable).resolve().parent / "backend" / "mtp_helper.ps1"
-        if p.exists():
-            return p
-    return Path(__file__).resolve().parent / "mtp_helper.ps1"
-
-def call_mtp_helper(action: str, device_name: str = "", sub_path: str = "", source_file: str = "", file_name: str = "", timeout: int = 10) -> Optional[Any]:
-    """安全呼叫 mtp_helper.ps1 並解析 JSON，防止 CP950/UTF-8 編碼異常與超時"""
-    script = get_mtp_helper_path()
-    if not script.exists():
-        print(f"[MTP ERROR] 找不到輔助腳本: {script}")
-        return None
-    try:
-        import subprocess, json
-        cmd = [
-            "powershell",
-            "-NoProfile",
-            "-ExecutionPolicy", "Bypass",
-            "-File", str(script),
-            "-Action", action,
-            "-DeviceName", device_name,
-            "-SubPath", sub_path,
-            "-SourceFile", source_file,
-            "-FileName", file_name
-        ]
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        res = subprocess.run(cmd, capture_output=True, text=False, timeout=timeout, creationflags=flags)
-        try:
-            out = res.stdout.decode("utf-8").strip()
-        except UnicodeDecodeError:
-            out = res.stdout.decode("cp950", errors="replace").strip()
-
-        if res.returncode == 0 and out:
-            return json.loads(out)
-        else:
-            try:
-                err = res.stderr.decode("utf-8").strip()
-            except UnicodeDecodeError:
-                err = res.stderr.decode("cp950", errors="replace").strip()
-            print(f"[MTP ERROR] Action={action} ReturnCode={res.returncode}, STDERR={err}")
-    except Exception as e:
-        print(f"[MTP EXCEPTION] Action={action} failed: {e}")
-    return None
-
-def get_mtp_devices_list() -> List[Dict[str, Any]]:
-    """透過 PowerShell 查詢目前連接中的 MTP / 可攜式裝置 (例如 Garmin 手錶)"""
-    res = call_mtp_helper("list_devices", timeout=8)
-    if isinstance(res, list):
-        return res
-    elif isinstance(res, dict):
-        return [res]
-    return []
 
 @app.get("/api/system/drives")
 def get_system_drives(current_user: str = Depends(get_current_user_from_req)):
@@ -1483,6 +1636,10 @@ def list_system_subfolders(path: str = Query(...), current_user: str = Depends(g
         if data and isinstance(data, dict):
             if "error" in data:
                 raise HTTPException(status_code=400, detail=data["error"])
+            if "subfolders" not in data or data["subfolders"] is None:
+                data["subfolders"] = []
+            elif isinstance(data["subfolders"], dict):
+                data["subfolders"] = [data["subfolders"]]
             return data
         raise HTTPException(status_code=400, detail="無法取得 MTP 資料夾內容，請確認手錶螢幕已解鎖並保持 USB 連線")
 
@@ -1545,9 +1702,10 @@ def get_watch_tracks(watch_path: Optional[str] = None, current_user: str = Depen
             files = call_mtp_helper("list_files", device_name=dev_name, sub_path=sub_path, timeout=10)
             files = files if isinstance(files, list) else []
             watch_tracks = []
+            playlists = []
             for f in files:
                 fname = f.get("name", "")
-                if fname.lower().endswith(".mp3"):
+                if fname.lower().endswith((".mp3", ".m4a", ".aac")):
                     watch_tracks.append({
                         "filename": fname,
                         "title": Path(fname).stem,
@@ -1559,10 +1717,12 @@ def get_watch_tracks(watch_path: Optional[str] = None, current_user: str = Depen
                         "full_path": f.get("path", f"mtp:\\{dev_name}\\{sub_path}\\{fname}"),
                         "mtime": 0
                     })
+                elif fname.lower().endswith((".m3u8", ".m3u")):
+                    playlists.append(Path(fname).stem)
             return {
                 "connected": True,
                 "watch_path": target_str,
-                "playlists": [],
+                "playlists": sorted(playlists),
                 "tracks": sorted(watch_tracks, key=lambda x: x["title"])
             }
         except Exception as e:
@@ -1842,7 +2002,41 @@ def create_watch_playlist(req: CreateWatchPlaylistRequest, current_user: str = D
             if drives:
                 target_str = drives[0]["path"]
 
-    if not target_str or not Path(target_str).exists():
+    if not target_str:
+        raise HTTPException(status_code=400, detail="未找到 Garmin 手錶音樂磁碟")
+
+    lines = ["#EXTM3U\n"]
+    for rel in req.rel_paths:
+        clean_rel = rel.replace("\\", "/")
+        stem = Path(clean_rel).stem
+        lines.append(f"#EXTINF:-1,{stem}\n")
+        lines.append(f"{clean_rel}\n")
+
+    # MTP 播放清單處理
+    if target_str.startswith("mtp:\\") or target_str.startswith("mtp:/"):
+        clean = target_str[5:].replace("/", "\\").strip("\\")
+        parts = clean.split("\\", 1)
+        dev_name = parts[0]
+        sub_path = parts[1] if len(parts) > 1 else ""
+
+        import tempfile
+        temp_file = Path(tempfile.gettempdir()) / f"{clean_name}.m3u8"
+        try:
+            with open(temp_file, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+            data = call_mtp_helper("copy_file", device_name=dev_name, sub_path=sub_path, source_file=str(temp_file), timeout=15)
+            if not data or not data.get("success"):
+                err = data.get("error") if data else "寫入播放清單到手錶失敗"
+                raise HTTPException(status_code=500, detail=err)
+        finally:
+            if temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except Exception:
+                    pass
+        return {"status": "ok", "playlist_name": clean_name}
+
+    if not Path(target_str).exists():
         raise HTTPException(status_code=400, detail="未找到 Garmin 手錶音樂磁碟")
 
     watch_dir = Path(target_str)
