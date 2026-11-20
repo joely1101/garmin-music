@@ -14,8 +14,10 @@ import urllib.request
 import urllib.parse
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+import threading
+import time
 
-from fastapi import FastAPI, UploadFile, File, Form, Query, HTTPException, Request, BackgroundTasks, Header, Depends
+from fastapi import FastAPI, UploadFile, File, Form, Query, HTTPException, Request, Header, Depends
 from fastapi.responses import JSONResponse, FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -342,6 +344,7 @@ app.add_middleware(
 )
 
 DOWNLOAD_TASKS: Dict[str, Dict[str, Any]] = {}
+last_heartbeat_time = time.time()
 
 # ----------------- Subsonic API for Garmin -----------------
 def subsonic_response(data_key: str = None, data_val: Any = None):
@@ -1049,7 +1052,11 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
     global last_heartbeat_time
     last_heartbeat_time = time.time()
     display_title = custom_title or url
-    DOWNLOAD_TASKS[task_id] = {"status": "processing", "progress": "Starting...", "title": display_title, "url": url, "user": current_user, "error": None}
+    if task_id not in DOWNLOAD_TASKS:
+        DOWNLOAD_TASKS[task_id] = {"status": "processing", "progress": "準備下載中...", "title": display_title, "url": url, "user": current_user, "error": None}
+    else:
+        DOWNLOAD_TASKS[task_id]["status"] = "processing"
+        DOWNLOAD_TASKS[task_id]["progress"] = "準備下載中..."
     
     clean_target = re.sub(r'[\\/*?:"<>|]', "", target_folder).strip() if target_folder else "音樂"
     if not clean_target:
@@ -1058,15 +1065,24 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
     target_dir.mkdir(parents=True, exist_ok=True)
     
     try:
-        is_direct_audio = url.lower().endswith(".mp3") or "audio" in url.lower() or custom_title is not None
+        url_lower = url.lower()
+        is_youtube = ("youtube.com" in url_lower or "youtu.be" in url_lower)
+        is_direct_audio = False
         is_rss = False
-        if not is_direct_audio:
-            try:
-                feed = feedparser.parse(url)
-                if feed.entries and len(feed.entries) > 0 and any("enclosures" in entry for entry in feed.entries):
-                    is_rss = True
-            except Exception:
-                is_rss = False
+
+        if not is_youtube:
+            url_path_only = url_lower.split("?")[0]
+            if url_path_only.endswith((".mp3", ".m4a", ".aac", ".wav", ".ogg", ".flac")) or ".mp3?" in url_lower:
+                is_direct_audio = True
+            elif custom_title and not url_lower.startswith("http"):
+                is_direct_audio = True
+            else:
+                try:
+                    feed = feedparser.parse(url)
+                    if feed.entries and len(feed.entries) > 0 and any("enclosures" in entry for entry in feed.entries):
+                        is_rss = True
+                except Exception:
+                    is_rss = False
             
         if is_direct_audio:
             ep_title = custom_title or f"Audio_{uuid.uuid4().hex[:6]}"
@@ -1074,7 +1090,7 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
             target_file = target_dir / f"{clean_title}.mp3"
             
             DOWNLOAD_TASKS[task_id]["title"] = ep_title
-            DOWNLOAD_TASKS[task_id]["progress"] = f"Downloading: {ep_title}..."
+            DOWNLOAD_TASKS[task_id]["progress"] = f"下載中: {ep_title}..."
             
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=60) as resp, open(target_file, "wb") as f:
@@ -1087,11 +1103,11 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
                 
             scan_and_sync_files()
             DOWNLOAD_TASKS[task_id]["status"] = "completed"
-            DOWNLOAD_TASKS[task_id]["progress"] = "Completed"
+            DOWNLOAD_TASKS[task_id]["progress"] = "下載完成"
             return
 
         if is_rss:
-            DOWNLOAD_TASKS[task_id]["progress"] = "Parsing Podcast RSS feed..."
+            DOWNLOAD_TASKS[task_id]["progress"] = "解析 Podcast 資訊中..."
             latest_entry = None
             audio_url = None
             for e in feed.entries:
@@ -1108,7 +1124,7 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
                 
             episode_title = latest_entry.get("title", "Podcast Episode")
             DOWNLOAD_TASKS[task_id]["title"] = episode_title
-            DOWNLOAD_TASKS[task_id]["progress"] = f"Downloading: {episode_title}..."
+            DOWNLOAD_TASKS[task_id]["progress"] = f"下載中: {episode_title}..."
             
             clean_title = re.sub(r'[\\/*?:"<>|]', "", episode_title)[:60]
             target_file = target_dir / f"{clean_title}.mp3"
@@ -1124,15 +1140,18 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
             
             scan_and_sync_files()
             DOWNLOAD_TASKS[task_id]["status"] = "completed"
-            DOWNLOAD_TASKS[task_id]["progress"] = "Completed"
+            DOWNLOAD_TASKS[task_id]["progress"] = "下載完成"
             return
             
         # Clean URL if single track requested
         clean_url = url
-        if not download_playlist and ("youtube.com" in url or "youtu.be" in url):
-            clean_url = re.sub(r'[?&]list=[^&]+', '', url)
+        if "music.youtube.com" in clean_url:
+            clean_url = clean_url.replace("music.youtube.com", "www.youtube.com")
 
-        DOWNLOAD_TASKS[task_id]["progress"] = "Extracting media info..."
+        if not download_playlist and is_youtube:
+            clean_url = re.sub(r'[?&]list=[^&]+', '', clean_url)
+
+        DOWNLOAD_TASKS[task_id]["progress"] = "解析媒體資訊中..."
         
         def progress_hook(d):
             global last_heartbeat_time
@@ -1140,9 +1159,9 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
             if d['status'] == 'downloading':
                 pct = d.get('_percent_str', '0%')
                 filename = Path(d.get('filename', '')).name
-                DOWNLOAD_TASKS[task_id]["progress"] = f"Downloading ({pct}): {filename[:30]}"
+                DOWNLOAD_TASKS[task_id]["progress"] = f"下載中 ({pct}): {filename[:30]}"
             elif d['status'] == 'finished':
-                DOWNLOAD_TASKS[task_id]["progress"] = "Converting audio to MP3 (192k)..."
+                DOWNLOAD_TASKS[task_id]["progress"] = "轉碼 MP3 中 (192k)..."
 
         ffmpeg_dir = get_ffmpeg_dir()
         ydl_opts = {
@@ -1180,22 +1199,36 @@ def run_download_task(task_id: str, url: str, target_folder: str = "音樂", dow
             
         scan_and_sync_files()
         DOWNLOAD_TASKS[task_id]["status"] = "completed"
-        DOWNLOAD_TASKS[task_id]["progress"] = "Completed"
+        DOWNLOAD_TASKS[task_id]["progress"] = "下載與轉碼完成"
         
     except Exception as e:
         scan_and_sync_files()
         DOWNLOAD_TASKS[task_id]["status"] = "failed"
         DOWNLOAD_TASKS[task_id]["error"] = str(e)
-        DOWNLOAD_TASKS[task_id]["progress"] = f"Error: {str(e)}"
+        DOWNLOAD_TASKS[task_id]["progress"] = f"下載錯誤: {str(e)}"
 
 @app.post("/api/download")
-def start_download(req: DownloadRequest, background_tasks: BackgroundTasks, current_user: str = Depends(get_current_user_from_req)):
+def start_download(req: DownloadRequest, current_user: str = Depends(get_current_user_from_req)):
     task_id = str(uuid.uuid4())
-    background_tasks.add_task(run_download_task, task_id, req.url, req.target_folder, req.download_playlist, req.custom_title, req.custom_artist, current_user)
+    display_title = req.custom_title or req.url
+    DOWNLOAD_TASKS[task_id] = {
+        "status": "processing",
+        "progress": "準備下載中...",
+        "title": display_title,
+        "url": req.url,
+        "user": current_user,
+        "error": None
+    }
+    t = threading.Thread(
+        target=run_download_task,
+        args=(task_id, req.url, req.target_folder, req.download_playlist, req.custom_title, req.custom_artist, current_user),
+        daemon=True
+    )
+    t.start()
     return {"task_id": task_id, "status": "queued"}
 
 @app.post("/api/download/direct")
-def start_direct_download(req: DirectAudioDownloadRequest, background_tasks: BackgroundTasks, current_user: str = Depends(get_current_user_from_req)):
+def start_direct_download(req: DirectAudioDownloadRequest, current_user: str = Depends(get_current_user_from_req)):
     for tid, t in DOWNLOAD_TASKS.items():
         if t.get("url") == req.audio_url and t.get("user") == current_user and t.get("status") in ("processing", "queued"):
             return {"task_id": tid, "status": "already_queued", "message": "此單集已在下載佇列中"}
@@ -1209,7 +1242,12 @@ def start_direct_download(req: DirectAudioDownloadRequest, background_tasks: Bac
         "user": current_user,
         "error": None
     }
-    background_tasks.add_task(run_download_task, task_id, req.audio_url, req.target_folder, False, req.title, req.artist, current_user)
+    t = threading.Thread(
+        target=run_download_task,
+        args=(task_id, req.audio_url, req.target_folder, False, req.title, req.artist, current_user),
+        daemon=True
+    )
+    t.start()
     return {"task_id": task_id, "status": "queued"}
 
 @app.get("/api/download/tasks")
@@ -2099,12 +2137,9 @@ def create_watch_playlist(req: CreateWatchPlaylistRequest, current_user: str = D
     return {"status": "ok", "playlist_name": clean_name}
 
 # ----------------- Heartbeat & Auto-Shutdown Endpoint -----------------
-last_heartbeat_time = asyncio.get_event_loop().time() if asyncio.get_event_loop().is_running() else 0
-
 @app.post("/api/system/heartbeat")
 def client_heartbeat():
     """前端定期發送心跳，更新最後活躍時間"""
-    import time
     global last_heartbeat_time
     last_heartbeat_time = time.time()
     return {"status": "ok"}
@@ -2114,7 +2149,6 @@ def shutdown_system():
     """前端視窗關閉時請求安全退出（若有下載任務進行中則不退出）"""
     if has_active_download_tasks():
         return {"status": "ignored", "reason": "download_in_progress"}
-    import threading
     def _exit():
         time.sleep(0.5)
         os._exit(0)

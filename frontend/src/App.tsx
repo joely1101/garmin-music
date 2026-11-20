@@ -530,9 +530,15 @@ export default function App() {
         setYtUrl('');
         fetchDownloadTasks();
         setTimeout(fetchLocalTracks, 3000);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`下載任務建立失敗: ${err.detail || res.statusText}`);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      alert(`下載連線失敗: ${e.message || '請確認後端服務是否正常'}`);
+    } finally {
+      setIsDownloading(false);
     }
   };
 
