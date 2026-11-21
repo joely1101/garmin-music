@@ -27,7 +27,8 @@ import {
   SkipBack,
   SkipForward,
   FastForward,
-  FolderSearch
+  FolderSearch,
+  AlertCircle
 } from 'lucide-react';
 
 interface LocalTrack {
@@ -178,6 +179,15 @@ export default function App() {
   const [parentBrowserPath, setParentBrowserPath] = useState<string | null>(null);
   const [browserSubfolders, setBrowserSubfolders] = useState<{ name: string; path: string }[]>([]);
   const [loadingBrowser, setLoadingBrowser] = useState(false);
+
+  // In-App Notification / Error Modal State (避免使用 blocking window.alert 導致瀏覽器心跳暫停)
+  const [errorModalTitle, setErrorModalTitle] = useState<string>('操作提示');
+  const [errorModalMessage, setErrorModalMessage] = useState<string | null>(null);
+
+  const showError = (message: string, title: string = '同步提示') => {
+    setErrorModalTitle(title);
+    setErrorModalMessage(message);
+  };
 
   // Initial Load & Heartbeat
   useEffect(() => {
@@ -747,7 +757,7 @@ export default function App() {
   const handleSyncSpecificTracksToWatch = async (trackIds: string[]) => {
     if (trackIds.length === 0) return;
     if (!watchStatus.connected) {
-      alert('未偵測到手錶磁碟，請先以 USB 連接 Garmin 手錶，或在設定中指定手錶路徑');
+      showError('未偵測到手錶磁碟，請先以 USB 連接 Garmin 手錶，或在設定中指定手錶路徑', '手錶未連線');
       return;
     }
 
@@ -766,18 +776,46 @@ export default function App() {
 
       if (res.ok) {
         const result = await res.json();
-        setSyncMessage(`✅ 同步完成！成功複製: ${result.copied_count} 首, 略過(已存在): ${result.skipped_count} 首`);
+        if (result.failed_count > 0) {
+          const firstReason = result.failed?.[0]?.reason || result.error_message || '手錶空間不足或寫入失敗';
+          if (result.copied_count === 0 && result.skipped_count === 0) {
+            setSyncMessage(`❌ 同步失敗：${firstReason}`);
+            showError(`❌ 同步失敗：${firstReason}\n\n請檢查手錶磁碟容量是否已滿，或先刪除手錶中不需要的歌曲。`, '同步失敗');
+          } else {
+            setSyncMessage(`⚠️ 部分同步失敗：成功 ${result.copied_count} 首，失敗 ${result.failed_count} 首`);
+            showError(`⚠️ 部分同步失敗！\n成功複製: ${result.copied_count} 首\n略過(已存在): ${result.skipped_count} 首\n失敗: ${result.failed_count} 首\n\n失敗原因：${firstReason}`, '部分同步失敗');
+          }
+        } else {
+          setSyncMessage(`✅ 同步完成！成功複製: ${result.copied_count} 首, 略過(已存在): ${result.skipped_count} 首`);
+        }
         await fetchWatchTracks();
         await fetchWatchStatus();
       } else {
-        const err = await res.json();
-        setSyncMessage(`❌ 同步失敗: ${err.detail || '未知錯誤'}`);
+        let errMsg = '未知錯誤';
+        try {
+          const err = await res.json();
+          if (typeof err.detail === 'string') {
+            errMsg = err.detail;
+          } else if (Array.isArray(err.detail)) {
+            errMsg = err.detail.map((d: any) => d.msg || JSON.stringify(d)).join(', ');
+          } else if (err.error || err.message) {
+            errMsg = err.error || err.message;
+          } else {
+            errMsg = JSON.stringify(err);
+          }
+        } catch {
+          const text = await res.text().catch(() => '');
+          errMsg = text || `伺服器回應異常 (HTTP ${res.status})`;
+        }
+        setSyncMessage(`❌ 同步失敗: ${errMsg}`);
+        showError(`❌ 同步失敗：${errMsg}`, '磁碟空間不足或同步失敗');
       }
     } catch (e: any) {
       setSyncMessage(`❌ 傳輸異常: ${e.message}`);
+      showError(`❌ 傳輸異常: ${e.message}`, '傳輸異常');
     } finally {
       setSyncingToWatch(false);
-      setTimeout(() => setSyncMessage(null), 6000);
+      setTimeout(() => setSyncMessage(null), 8000);
     }
   };
 
@@ -1083,11 +1121,13 @@ export default function App() {
             <div className="space-y-1.5">
               <div className="flex justify-between text-[11px] text-neutral-400">
                 <span className="truncate max-w-[120px]">{watchStatus.active_watch.path}</span>
-                <span>剩餘 {watchStatus.active_watch.free_gb} GB</span>
+                <span className={watchStatus.active_watch.free_bytes < 200 * 1024 * 1024 ? "text-red-400 font-semibold" : ""}>
+                  剩餘 {watchStatus.active_watch.free_bytes < 1024 * 1024 * 1024 ? `${Math.round(watchStatus.active_watch.free_bytes / (1024 * 1024))} MB` : `${watchStatus.active_watch.free_gb} GB`}
+                </span>
               </div>
               <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden">
                 <div 
-                  className="bg-orange-500 h-full rounded-full transition-all duration-500"
+                  className={`h-full rounded-full transition-all duration-500 ${watchStatus.active_watch.used_percent > 90 ? 'bg-red-500' : 'bg-orange-500'}`}
                   style={{ width: `${Math.min(100, watchStatus.active_watch.used_percent)}%` }}
                 />
               </div>
@@ -1120,7 +1160,13 @@ export default function App() {
           {/* 頂部手錶連線快捷狀態 */}
           <div className="flex items-center gap-3">
             {syncMessage && (
-              <div className="text-xs px-3 py-1.5 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-200 animate-fadeIn">
+              <div className={`text-xs px-3 py-1.5 rounded-lg border animate-fadeIn font-medium ${
+                syncMessage.includes('❌')
+                  ? 'bg-red-500/20 border-red-500/40 text-red-200'
+                  : syncMessage.includes('⚠️')
+                  ? 'bg-amber-500/20 border-amber-500/40 text-amber-200'
+                  : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-200'
+              }`}>
                 {syncMessage}
               </div>
             )}
@@ -1129,7 +1175,7 @@ export default function App() {
               <Watch className="w-4 h-4 text-orange-400" />
               <span className="text-neutral-300">
                 {watchStatus.connected && watchStatus.active_watch
-                  ? `${watchStatus.active_watch.path} (剩餘 ${watchStatus.active_watch.free_gb} GB)`
+                  ? `${watchStatus.active_watch.path} (剩餘 ${watchStatus.active_watch.free_bytes < 1024 * 1024 * 1024 ? `${Math.round(watchStatus.active_watch.free_bytes / (1024 * 1024))} MB` : `${watchStatus.active_watch.free_gb} GB`})`
                   : '未偵測到手錶磁碟 (請插上 USB)'}
               </span>
             </div>
@@ -2315,6 +2361,35 @@ export default function App() {
                   選取目前目錄
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 錯誤/提示彈窗 (In-App Modal，不阻塞瀏覽器心跳機制) */}
+      {errorModalMessage && (
+        <div className="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-neutral-900 border border-neutral-700/80 rounded-xl p-5 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
+                <span>{errorModalTitle}</span>
+              </h3>
+              <button onClick={() => setErrorModalMessage(null)} className="text-neutral-400 hover:text-white transition">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="bg-neutral-950/60 border border-neutral-800 rounded-lg p-3 text-xs text-neutral-300 whitespace-pre-line leading-relaxed font-mono">
+              {errorModalMessage}
+            </div>
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={() => setErrorModalMessage(null)}
+                className="px-4 py-1.5 bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-xs font-medium transition"
+              >
+                我知道了
+              </button>
             </div>
           </div>
         </div>

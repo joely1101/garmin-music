@@ -28,3 +28,4 @@ frontend/android/local.properties
 # PyInstaller Build artifacts
 build/
 *.spec.bak
+bin/

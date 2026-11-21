@@ -40,7 +40,7 @@ else:
 import uvicorn
 from backend.main import app
 
-DEFAULT_PORT = 28888
+DEFAULT_PORT = 48888
 
 def is_already_running(port: int = DEFAULT_PORT) -> bool:
     """Check if an instance is already alive and responding on localhost:port."""
@@ -95,7 +95,26 @@ def start_server(port: int):
             f.write(f"Server crashed: {e}\n")
 
 def open_ui(url: str):
-    """Open UI in user's browser, bringing window to front reliably."""
+    """Open the UI in standalone App-Mode window (Chrome, Edge) or fallback to default browser."""
+    import subprocess
+
+    app_browsers = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe"),
+    ]
+
+    for browser in app_browsers:
+        if os.path.exists(browser):
+            try:
+                subprocess.Popen([browser, f"--app={url}", "--window-size=1280,820"])
+                return
+            except Exception:
+                pass
+
     try:
         if sys.platform == "win32":
             os.startfile(url)
@@ -141,23 +160,25 @@ def main():
     open_ui(server_url)
 
     # Monitor heartbeat: auto exit after browser window has been closed.
-    # - Never exit while active download tasks are running.
-    # - Allow 60 seconds grace period on initial launch.
-    # - Allow 60 seconds of silence before exiting when browser is closed.
-    grace_period_end = time.time() + 60.0
+    # - Never exit while active download or sync tasks are running.
+    # - Allow 120 seconds grace period on initial launch.
+    # - Allow 300 seconds (5 minutes) of silence before exiting when browser is closed.
+    grace_period_end = time.time() + 120.0
     try:
         while True:
             time.sleep(2)
             now = time.time()
 
-            # If download tasks are running, continuously renew heartbeat so server NEVER terminates
-            if hasattr(bmain, "has_active_download_tasks") and bmain.has_active_download_tasks():
+            # If download or sync tasks are running, continuously renew heartbeat so server NEVER terminates
+            active_downloads = hasattr(bmain, "has_active_download_tasks") and bmain.has_active_download_tasks()
+            active_sync = hasattr(bmain, "is_syncing_to_watch") and bmain.is_syncing_to_watch()
+            if active_downloads or active_sync:
                 bmain.last_heartbeat_time = now
                 continue
 
             if now > grace_period_end:
-                # If no heartbeat received from frontend for over 60 seconds and no downloads, exit cleanly
-                if now - bmain.last_heartbeat_time > 60.0:
+                # If no heartbeat received from frontend for over 300 seconds and no active tasks, exit cleanly
+                if now - bmain.last_heartbeat_time > 300.0:
                     break
     except (KeyboardInterrupt, SystemExit):
         pass

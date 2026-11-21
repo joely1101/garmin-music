@@ -317,6 +317,8 @@ app = FastAPI(title="Garmin Modern Subsonic & Music Server")
 
 @app.middleware("http")
 async def log_garmin_requests(request: Request, call_next):
+    global last_heartbeat_time
+    last_heartbeat_time = time.time()
     path = request.url.path
     if path.startswith("/rest/"):
         client_ip = request.client.host if request.client else "unknown"
@@ -345,6 +347,11 @@ app.add_middleware(
 
 DOWNLOAD_TASKS: Dict[str, Dict[str, Any]] = {}
 last_heartbeat_time = time.time()
+is_syncing_active = False
+
+def is_syncing_to_watch() -> bool:
+    """查詢目前是否正在進行手錶檔案傳輸/同步"""
+    return is_syncing_active
 
 # ----------------- Subsonic API for Garmin -----------------
 def subsonic_response(data_key: str = None, data_val: Any = None):
@@ -1384,30 +1391,30 @@ def call_mtp_helper(action: str, device_name: str = "", sub_path: str = "", sour
         print(f"[MTP EXCEPTION] Action={action} failed: {e}")
     return None
 
-def parse_mtp_storage(total_str: str, free_str: str, used_pct_str: str) -> Dict[str, Any]:
-    def to_bytes(s: str) -> int:
-        if not s:
-            return 0
-        s = s.strip()
-        mult = 1
-        if "TB" in s.upper():
-            mult = 1024**4
-        elif "GB" in s.upper():
-            mult = 1024**3
-        elif "MB" in s.upper():
-            mult = 1024**2
-        elif "KB" in s.upper():
-            mult = 1024
-        nums = re.findall(r"[\d\.]+", s)
-        if nums:
-            try:
-                return int(float(nums[0]) * mult)
-            except Exception:
-                pass
+def mtp_size_to_bytes(s: str) -> int:
+    if not s:
         return 0
+    s = s.strip()
+    mult = 1
+    if "TB" in s.upper():
+        mult = 1024**4
+    elif "GB" in s.upper():
+        mult = 1024**3
+    elif "MB" in s.upper():
+        mult = 1024**2
+    elif "KB" in s.upper():
+        mult = 1024
+    nums = re.findall(r"[\d\.]+", s)
+    if nums:
+        try:
+            return int(float(nums[0]) * mult)
+        except Exception:
+            pass
+    return 0
 
-    total_bytes = to_bytes(total_str)
-    free_bytes = to_bytes(free_str)
+def parse_mtp_storage(total_str: str, free_str: str, used_pct_str: str) -> Dict[str, Any]:
+    total_bytes = mtp_size_to_bytes(total_str)
+    free_bytes = mtp_size_to_bytes(free_str)
     used_bytes = max(0, total_bytes - free_bytes)
 
     used_percent = 0.0
@@ -1783,21 +1790,24 @@ def get_watch_tracks(watch_path: Optional[str] = None, current_user: str = Depen
         dev_name = parts[0]
         sub_path = parts[1] if len(parts) > 1 else ""
         try:
-            files = call_mtp_helper("list_files", device_name=dev_name, sub_path=sub_path, timeout=10)
+            files = call_mtp_helper("list_files", device_name=dev_name, sub_path=sub_path, timeout=60)
             files = files if isinstance(files, list) else []
             watch_tracks = []
             playlists = []
             for f in files:
                 fname = f.get("name", "")
                 if fname.lower().endswith((".mp3", ".m4a", ".aac")):
+                    size_val = f.get("size", 0)
+                    if size_val == 0 and f.get("size_str"):
+                        size_val = mtp_size_to_bytes(f.get("size_str"))
                     watch_tracks.append({
                         "filename": fname,
                         "title": Path(fname).stem,
                         "artist": "Garmin Watch",
                         "duration": 0,
-                        "size": f.get("size", 0),
-                        "folder": "手錶音樂",
-                        "rel_path": fname,
+                        "size": size_val,
+                        "folder": f.get("folder") or "手錶音樂",
+                        "rel_path": f.get("rel_path") or fname,
                         "full_path": f.get("path", f"mtp:\\{dev_name}\\{sub_path}\\{fname}"),
                         "mtime": 0
                     })
@@ -1806,8 +1816,8 @@ def get_watch_tracks(watch_path: Optional[str] = None, current_user: str = Depen
             return {
                 "connected": True,
                 "watch_path": target_str,
-                "playlists": sorted(playlists),
-                "tracks": sorted(watch_tracks, key=lambda x: x["title"])
+                "playlists": sorted(list(set(playlists))),
+                "tracks": sorted(watch_tracks, key=lambda x: (x["folder"], x["title"]))
             }
         except Exception as e:
             print(f"[MTP ERROR] 讀取 MTP 歌曲失敗: {e}")
@@ -1868,126 +1878,200 @@ def get_watch_tracks(watch_path: Optional[str] = None, current_user: str = Depen
 @app.post("/api/watch/sync")
 def sync_tracks_to_watch(req: WatchSyncRequest, current_user: str = Depends(get_current_user_from_req)):
     """將選取的電腦端歌曲複製到手錶磁碟或 MTP 裝置，並更新 M3U8 播放清單"""
-    target_str = req.watch_path
-    if not target_str:
-        with get_db() as conn:
-            row = conn.execute("SELECT value FROM settings WHERE key = 'watch_mount_path'").fetchone()
-            if row and row["value"]:
-                target_str = row["value"]
+    global is_syncing_active, last_heartbeat_time
+    is_syncing_active = True
+    last_heartbeat_time = time.time()
+    try:
+        target_str = req.watch_path
         if not target_str:
-            drives = detect_garmin_watch_drives()
-            if drives:
-                target_str = drives[0]["path"]
+            with get_db() as conn:
+                row = conn.execute("SELECT value FROM settings WHERE key = 'watch_mount_path'").fetchone()
+                if row and row["value"]:
+                    target_str = row["value"]
+            if not target_str:
+                drives = detect_garmin_watch_drives()
+                if drives:
+                    target_str = drives[0]["path"]
 
-    if not target_str:
-        raise HTTPException(status_code=400, detail="未設定手錶路徑，請確認手錶已連線或手動指定路徑")
+        if not target_str:
+            raise HTTPException(status_code=400, detail="未設定手錶路徑，請確認手錶已連線或手動指定路徑")
 
-    with get_db() as conn:
-        placeholders = ",".join("?" * len(req.track_ids))
-        cur = conn.execute(f"SELECT * FROM tracks WHERE id IN ({placeholders})", (*req.track_ids,))
-        tracks = cur.fetchall()
+        with get_db() as conn:
+            placeholders = ",".join("?" * len(req.track_ids))
+            cur = conn.execute(f"SELECT * FROM tracks WHERE id IN ({placeholders})", (*req.track_ids,))
+            tracks = cur.fetchall()
 
-    if not tracks:
-        raise HTTPException(status_code=400, detail="未選取任何有效歌曲")
+        if not tracks:
+            raise HTTPException(status_code=400, detail="未選取任何有效歌曲")
 
-    # 處理 MTP 裝置同步
-    if target_str.startswith("mtp:\\") or target_str.startswith("mtp:/"):
-        clean = target_str[5:].replace("/", "\\").strip("\\")
-        parts = clean.split("\\", 1)
-        dev_name = parts[0]
-        sub_path = parts[1] if len(parts) > 1 else ""
+        # 處理 MTP 裝置同步
+        if target_str.startswith("mtp:\\") or target_str.startswith("mtp:/"):
+            clean = target_str[5:].replace("/", "\\").strip("\\")
+            parts = clean.split("\\", 1)
+            dev_name = parts[0]
+            sub_path = parts[1] if len(parts) > 1 else ""
+
+            # MTP 可用空間預檢
+            mtp_st = get_mtp_storage(target_str)
+            if mtp_st and mtp_st.get("free_bytes", 0) > 0:
+                total_req_bytes = sum(
+                    (MUSIC_DIR / t["rel_path"]).stat().st_size
+                    for t in tracks
+                    if (MUSIC_DIR / t["rel_path"]).exists()
+                )
+                free_bytes = mtp_st["free_bytes"]
+                if total_req_bytes > free_bytes:
+                    req_mb = round(total_req_bytes / (1024 * 1024), 1)
+                    free_mb = round(free_bytes / (1024 * 1024), 1)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"手錶磁碟空間不足！欲同步歌曲需 {req_mb} MB，但手錶僅剩餘 {free_mb} MB。請先刪除手錶中不需要的歌曲再進行同步。"
+                    )
+
+            copied = []
+            failed = []
+            for t in tracks:
+                last_heartbeat_time = time.time()
+                src_file = MUSIC_DIR / t["rel_path"]
+                if not src_file.exists():
+                    failed.append({"title": t["title"], "reason": "電腦上原始檔案遺失"})
+                    continue
+                file_size_mb = src_file.stat().st_size / (1024 * 1024)
+                copy_timeout = max(90, int(file_size_mb * 4 + 45))
+                t_folder = t["folder"] if ("folder" in t.keys() and t["folder"]) else ""
+                dest_sub = f"{sub_path}\\{t_folder}" if t_folder else sub_path
+                data = call_mtp_helper("copy_file", device_name=dev_name, sub_path=dest_sub, source_file=str(src_file), timeout=copy_timeout)
+                if data and data.get("success"):
+                    copied.append(t["title"])
+                else:
+                    err_msg = data.get("error") if data else "複製失敗 (傳輸逾時或無法寫入)"
+                    if "No space left" in str(err_msg) or "112" in str(err_msg) or "空間不足" in str(err_msg):
+                        err_msg = "手錶磁碟空間不足 (Disk Full)"
+                    failed.append({"title": t["title"], "reason": err_msg})
+
+            if len(copied) == 0 and len(failed) > 0:
+                first_err = failed[0]["reason"]
+                raise HTTPException(status_code=400, detail=f"同步失敗：{first_err}")
+
+            return {
+                "status": "partial" if failed else "ok",
+                "copied_count": len(copied),
+                "skipped_count": 0,
+                "failed_count": len(failed),
+                "copied": copied,
+                "skipped": [],
+                "failed": failed,
+                "error_message": "；".join([f"{f['title']}: {f['reason']}" for f in failed]) if failed else None
+            }
+
+        if not Path(target_str).exists():
+            raise HTTPException(status_code=400, detail="指定的手錶資料夾不存在")
+
+        watch_dir = Path(target_str)
+
+        # 1. 預先檢查磁碟可用空間
+        try:
+            _, _, free_bytes = shutil.disk_usage(watch_dir)
+            total_req_bytes = 0
+            for t in tracks:
+                src = MUSIC_DIR / t["rel_path"]
+                if src.exists():
+                    f_name = t["folder"] if t["folder"] else "音樂"
+                    dest_f = watch_dir / f_name / src.name
+                    if not (dest_f.exists() and dest_f.stat().st_size == src.stat().st_size):
+                        total_req_bytes += src.stat().st_size
+
+            if free_bytes is not None and total_req_bytes > free_bytes:
+                req_mb = round(total_req_bytes / (1024 * 1024), 1)
+                free_mb = round(free_bytes / (1024 * 1024), 1)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"手錶磁碟空間不足！欲同步歌曲需 {req_mb} MB，但手錶僅剩餘 {free_mb} MB。請先刪除手錶中不需要的歌曲再進行同步。"
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
 
         copied = []
+        skipped = []
         failed = []
+        folders_affected = set()
+
         for t in tracks:
+            last_heartbeat_time = time.time()
             src_file = MUSIC_DIR / t["rel_path"]
             if not src_file.exists():
                 failed.append({"title": t["title"], "reason": "電腦上原始檔案遺失"})
                 continue
-            data = call_mtp_helper("copy_file", device_name=dev_name, sub_path=sub_path, source_file=str(src_file), timeout=30)
-            if data and data.get("success"):
+                
+            folder_name = t["folder"] if t["folder"] else "音樂"
+            folders_affected.add(folder_name)
+            dest_folder = watch_dir / folder_name
+            dest_file = dest_folder / src_file.name
+
+            # 檢查是否已存在相同大小的檔案
+            if dest_file.exists() and dest_file.stat().st_size == src_file.stat().st_size:
+                skipped.append(t["title"])
+                continue
+
+            try:
+                dest_folder.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_file, dest_file)
                 copied.append(t["title"])
-            else:
-                err_msg = data.get("error") if data else "複製失敗"
-                failed.append({"title": t["title"], "reason": err_msg})
+            except Exception as e:
+                # 清理寫入中斷造成的殘留損毀檔案，避免耗盡手錶寶貴空間
+                if dest_file.exists():
+                    try:
+                        dest_file.unlink()
+                    except Exception:
+                        pass
+                err_str = str(e)
+                if "No space left" in err_str or "112" in err_str or "空間不足" in err_str:
+                    err_str = "手錶磁碟空間不足 (Disk Full)"
+                failed.append({"title": t["title"], "reason": err_str})
+
+        # 為受影響的目錄重新生成 M3U8 播放清單
+        for folder_name in folders_affected:
+            folder_path = watch_dir / folder_name
+            m3u8_file = watch_dir / f"{folder_name}.m3u8"
+            if folder_path.exists():
+                mp3s = sorted(folder_path.glob("*.mp3"))
+                if mp3s:
+                    lines = ["#EXTM3U\n"]
+                    for mp3 in mp3s:
+                        lines.append(f"#EXTINF:-1,{mp3.stem}\n")
+                        lines.append(f"{folder_name}/{mp3.name}\n")
+                    try:
+                        with open(m3u8_file, "w", encoding="utf-8") as f:
+                            f.writelines(lines)
+                    except Exception:
+                        pass
+
+        # 若所有欲複製歌曲全部失敗，直接拋出 HTTP 400 讓前端明確彈出錯誤訊息
+        if len(copied) == 0 and len(skipped) == 0 and len(failed) > 0:
+            first_err = failed[0]["reason"]
+            raise HTTPException(status_code=400, detail=f"同步失敗：{first_err}")
 
         return {
-            "status": "ok",
+            "status": "partial" if failed else "ok",
             "copied_count": len(copied),
-            "skipped_count": 0,
+            "skipped_count": len(skipped),
             "failed_count": len(failed),
             "copied": copied,
-            "skipped": [],
-            "failed": failed
+            "skipped": skipped,
+            "failed": failed,
+            "error_message": "；".join([f"{f['title']}: {f['reason']}" for f in failed]) if failed else None
         }
-
-    if not Path(target_str).exists():
-        raise HTTPException(status_code=400, detail="指定的手錶資料夾不存在")
-
-    watch_dir = Path(target_str)
-    
-    with get_db() as conn:
-        placeholders = ",".join("?" * len(req.track_ids))
-        cur = conn.execute(f"SELECT * FROM tracks WHERE id IN ({placeholders})", (*req.track_ids,))
-        tracks = cur.fetchall()
-
-    if not tracks:
-        raise HTTPException(status_code=400, detail="未選取任何有效歌曲")
-
-    copied = []
-    skipped = []
-    failed = []
-    folders_affected = set()
-
-    for t in tracks:
-        src_file = MUSIC_DIR / t["rel_path"]
-        if not src_file.exists():
-            failed.append({"title": t["title"], "reason": "電腦上原始檔案遺失"})
-            continue
-            
-        folder_name = t["folder"] if t["folder"] else "音樂"
-        folders_affected.add(folder_name)
-        dest_folder = watch_dir / folder_name
-        dest_folder.mkdir(parents=True, exist_ok=True)
-        dest_file = dest_folder / src_file.name
-
-        # 檢查是否已存在相同大小的檔案
-        if dest_file.exists() and dest_file.stat().st_size == src_file.stat().st_size:
-            skipped.append(t["title"])
-            continue
-
-        try:
-            shutil.copy2(src_file, dest_file)
-            copied.append(t["title"])
-        except Exception as e:
-            failed.append({"title": t["title"], "reason": str(e)})
-
-    # 為受影響的目錄重新生成 M3U8 播放清單
-    for folder_name in folders_affected:
-        folder_path = watch_dir / folder_name
-        m3u8_file = watch_dir / f"{folder_name}.m3u8"
-        if folder_path.exists():
-            mp3s = sorted(folder_path.glob("*.mp3"))
-            if mp3s:
-                lines = ["#EXTM3U\n"]
-                for mp3 in mp3s:
-                    lines.append(f"#EXTINF:-1,{mp3.stem}\n")
-                    lines.append(f"{folder_name}/{mp3.name}\n")
-                try:
-                    with open(m3u8_file, "w", encoding="utf-8") as f:
-                        f.writelines(lines)
-                except Exception:
-                    pass
-
-    return {
-        "status": "ok",
-        "copied_count": len(copied),
-        "skipped_count": len(skipped),
-        "failed_count": len(failed),
-        "copied": copied,
-        "skipped": skipped,
-        "failed": failed
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"同步異常：{str(e)}")
+    finally:
+        is_syncing_active = False
+        last_heartbeat_time = time.time()
 
 @app.post("/api/watch/delete")
 def delete_tracks_from_watch(req: WatchDeleteRequest, current_user: str = Depends(get_current_user_from_req)):
@@ -2016,7 +2100,9 @@ def delete_tracks_from_watch(req: WatchDeleteRequest, current_user: str = Depend
         deleted = []
         for rel in req.rel_paths:
             fn = Path(rel).name
-            data = call_mtp_helper("delete_file", device_name=dev_name, sub_path=sub_path, file_name=fn, timeout=10)
+            rel_parent = str(Path(rel).parent)
+            target_sub = f"{sub_path}\\{rel_parent}" if rel_parent and rel_parent != "." else sub_path
+            data = call_mtp_helper("delete_file", device_name=dev_name, sub_path=target_sub, file_name=fn, timeout=15)
             if data and data.get("success"):
                 deleted.append(rel)
         return {"status": "ok", "deleted": deleted}

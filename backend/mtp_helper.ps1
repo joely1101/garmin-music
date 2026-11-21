@@ -118,6 +118,45 @@ function Get-MTPFolderItem {
     return $folder
 }
 
+function Ensure-MTPFolderItem {
+    param([string]$DevName, [string]$RelPath)
+    $shell = New-Object -ComObject Shell.Application
+    $pc = $shell.NameSpace(17)
+    $device = $pc.Items() | Where-Object { $_.Name.Trim() -eq $DevName.Trim() } | Select-Object -First 1
+    if (!$device) {
+        $device = $pc.Items() | Where-Object { $_.Name -like "*$DevName*" } | Select-Object -First 1
+    }
+    if (!$device) { return $null }
+
+    $folder = $null
+    try { $folder = $device.GetFolder } catch {}
+    if (!$folder) { return $null }
+
+    if (!$RelPath -or $RelPath.Trim() -eq "") {
+        return $folder
+    }
+
+    $parts = $RelPath.Trim('\').Split('\')
+    foreach ($part in $parts) {
+        if (!$part) { continue }
+        $trimmed = $part.Trim()
+        $child = $folder.Items() | Where-Object { $_.Name.Trim() -eq $trimmed } | Select-Object -First 1
+        if (!$child) {
+            try {
+                $folder.NewFolder($trimmed)
+                Start-Sleep -Milliseconds 400
+                $child = $folder.Items() | Where-Object { $_.Name.Trim() -eq $trimmed } | Select-Object -First 1
+            } catch {
+                return $null
+            }
+        }
+        if (!$child) { return $null }
+        $folder = $child.GetFolder
+        if (!$folder) { return $null }
+    }
+    return $folder
+}
+
 function Get-MTPStorageInfo {
     param([string]$DevName, [string]$RelPath)
     $shell = New-Object -ComObject Shell.Application
@@ -192,13 +231,55 @@ function List-MTPSubfolders {
 
 function Copy-FileToMTP {
     param([string]$DevName, [string]$RelPath, [string]$SrcFile)
-    $folder = Get-MTPFolderItem -DevName $DevName -RelPath $RelPath
-    if (!$folder) {
-        return [PSCustomObject]@{ success = $false; error = "找不到目標資料夾: $RelPath" }
+    if (![System.IO.File]::Exists($SrcFile)) {
+        return [PSCustomObject]@{ success = $false; error = "本機來源檔案不存在: $SrcFile" }
     }
+    $srcItem = Get-Item $SrcFile
+    $srcName = $srcItem.Name
+    $srcLength = $srcItem.Length
+
+    $folder = Ensure-MTPFolderItem -DevName $DevName -RelPath $RelPath
+    if (!$folder) {
+        return [PSCustomObject]@{ success = $false; error = "找不到或無法建立手錶目標資料夾: $RelPath" }
+    }
+
     try {
+        # 16 = FOF_NOCONFIRMATION, 512 = FOF_NOERRORUI
         $folder.CopyHere($SrcFile, 16 + 512)
-        return [PSCustomObject]@{ success = $true }
+
+        # 由於 Windows Shell 對 MTP 的 CopyHere 是非同步執行，
+        # 若 PowerShell 程序立即結束，Explorer 將中斷傳輸。
+        # 因此在此等候傳輸完成（輪詢檔案是否在目標目錄中完成寫入）
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        # 根據檔案大小動態計算等候時間：至少 45 秒，每 10MB 增加 5 秒
+        $maxWaitMs = [Math]::Max(45000, [int]($srcLength / (10 * 1024 * 1024)) * 5000 + 35000)
+        $completed = $false
+
+        while ($sw.ElapsedMilliseconds -lt $maxWaitMs) {
+            Start-Sleep -Milliseconds 800
+            $destItem = $folder.Items() | Where-Object { $_.Name -eq $srcName } | Select-Object -First 1
+            if ($destItem) {
+                $detSize = $folder.GetDetailsOf($destItem, 2)
+                # 當 GetDetailsOf 返回非空且非 0 時，代表傳輸已順利完成
+                if ($detSize -and $detSize.Trim() -ne "" -and $detSize -ne "0" -and $detSize -ne "0 KB") {
+                    $completed = $true
+                    Start-Sleep -Milliseconds 500
+                    break
+                }
+            }
+        }
+
+        if ($completed) {
+            return [PSCustomObject]@{ success = $true }
+        }
+
+        # 最後再次確認檔案是否存在
+        $finalCheck = $folder.Items() | Where-Object { $_.Name -eq $srcName } | Select-Object -First 1
+        if ($finalCheck) {
+            return [PSCustomObject]@{ success = $true }
+        } else {
+            return [PSCustomObject]@{ success = $false; error = "傳輸逾時，檔案未成功寫入手錶" }
+        }
     } catch {
         return [PSCustomObject]@{ success = $false; error = $_.Exception.Message }
     }
@@ -246,17 +327,41 @@ function List-MTPFiles {
     if (!$folder) {
         return @()
     }
-    $files = @()
-    foreach ($item in $folder.Items()) {
-        if (!$item.IsFolder) {
-            $files += [PSCustomObject]@{
-                name = $item.Name
-                size = $item.Size
-                path = "mtp:\$DevName\$RelPath\$($item.Name)"
+
+    # 遞迴掃描 MTP 目錄下所有音樂與播放清單檔案
+    function Recurse-MTPFolder($f, $rel) {
+        $result = @()
+        foreach ($item in $f.Items()) {
+            if ($item.IsFolder) {
+                $subF = $null
+                try { $subF = $item.GetFolder } catch {}
+                if ($subF) {
+                    $nextRel = if ($rel) { "$rel\$($item.Name)" } else { $item.Name }
+                    $result += Recurse-MTPFolder $subF $nextRel
+                }
+            } else {
+                $name = $item.Name
+                $ext = [System.IO.Path]::GetExtension($name).ToLower()
+                if ($ext -in @('.mp3', '.m4a', '.aac', '.m3u', '.m3u8')) {
+                    $sizeStr = $f.GetDetailsOf($item, 2)
+                    $folderName = if ($rel) { $rel.Split('\')[-1] } else { "手錶音樂" }
+                    $fileRel = if ($rel) { "$rel\$name" } else { $name }
+                    $result += [PSCustomObject]@{
+                        name      = $name
+                        folder    = $folderName
+                        rel_path  = $fileRel
+                        size_str  = $sizeStr
+                        size      = $item.Size
+                        path      = "mtp:\$DevName\$RelPath\$fileRel"
+                    }
+                }
             }
         }
+        return @($result)
     }
-    return @($files)
+
+    $allFiles = @(Recurse-MTPFolder $folder "")
+    return @($allFiles)
 }
 
 if ($Action -eq "list_devices") {
